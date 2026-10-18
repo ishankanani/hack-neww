@@ -53,3 +53,5 @@ The priorities build on the official sources in `DACHSER_MANAGER_RESEARCH.md`, p
 Update this section as each checkpoint lands. Use `git revert <commit>` for shared-history rollback; the starting tag preserves the prior code.
 
 - Starting code and annotated checkpoint pushed to GitHub before implementation.
+- `d99678f`: connection cutoff evidence and confirmed-delivery lifecycle; 38 relevant regression checks passed.
+- Attention queue and continue / reroute / bounded-wait comparisons implemented using the same ETA engine. Screening remains distinct from recalculation; unavailable actions have no invented figures.

@@ -29,6 +29,7 @@ from .restrictions import drive_with_restrictions
 from .risk import assess
 from .shipments import Shipments, plan as plan_options, savings_vs_baseline, shipment_visits_hub_during, shipment_traffic_exposure_minutes
 from . import savings as savings_engine
+from .dispatch import attention, action_comparison
 from .simulate import reroute as simulate_reroute
 from .map_tiles import router as map_tiles_router
 
@@ -268,6 +269,7 @@ def list_shipments(status: Optional[str] = None, origin: Optional[str] = None,
         traffic_minutes=sum(shipment_traffic_exposure_minutes(s,e,pending_only=True) for e in traffic)
         projected_eta=(parse(s["current_eta"])+timedelta(minutes=hub_minutes+traffic_minutes)).isoformat() if hub_minutes+traffic_minutes else None
         return {**{k:v for k,v in s.items() if k not in {"options","accepted_plan"}},
+                "dispatch":attention(s,S["ships"].context_for(s)["operations"],hub_minutes+traffic_minutes,closures),
                 "pending_hub_delay_minutes":hub_minutes,
                 "pending_hub_events":[e["id"] for e in matching],
                 "pending_traffic_minutes":traffic_minutes,
@@ -282,7 +284,7 @@ def get_shipment(sid: str):
     s = S["ships"].get(sid)
     if not s:
         raise HTTPException(404, "unknown shipment")
-    return s
+    return {**s,"dispatch_actions":action_comparison(s)}
 
 
 @app.post("/api/shipments")
@@ -541,7 +543,8 @@ def resolve_event(rid: str):
 def replan_shipment(sid: str):
     if not S["ships"].get(sid): raise HTTPException(404,"Unknown shipment")
     with LOCK:
-        return S["ships"].replan(sid)
+        s=S["ships"].replan(sid)
+        return {**s,"dispatch_actions":action_comparison(s)}
 
 @app.post("/api/decisions")
 @serialized

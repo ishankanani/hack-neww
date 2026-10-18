@@ -126,7 +126,7 @@ def test_hold_is_persistent_blocks_dispatch_and_requires_clear_approval(saved, m
     with pytest.raises(ValueError, match="weather zone"):
         ships.schedule("S1", 0, force=True, quote_id="q1")
     clear = {**deepcopy(old), "avoidance_status": "CLEAR", "route_id": "A-B:clear", "quote_id": "q2"}
-    monkeypatch.setattr(shipment_module, "plan", lambda *args: [deepcopy(clear)])
+    monkeypatch.setattr(shipment_module, "plan", lambda *args, **kwargs: [deepcopy(clear)])
     ships.replan("S1")
     assert held["status"] == "ON HOLD"
     result, warning = ships.schedule("S1", 0, quote_id="q2")
@@ -159,7 +159,7 @@ def test_expired_departure_is_moved_forward_on_hold_review(saved, monkeypatch):
     ships, ops, old = saved
     ships.hold("S1", 0, "Waiting for storm to pass")
     ships.data["S1"]["planned_departure"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    monkeypatch.setattr(shipment_module, "plan", lambda *args: [deepcopy(old)])
+    monkeypatch.setattr(shipment_module, "plan", lambda *args, **kwargs: [deepcopy(old)])
     ships.replan("S1")
     assert datetime.fromisoformat(ships.data["S1"]["planned_departure"]) > datetime.now(timezone.utc)
     assert ships.data["S1"]["status"] == "ON HOLD"

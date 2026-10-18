@@ -94,17 +94,28 @@ def _ldm(weight_kg):
     return max(0.5, round((weight_kg or 0) / KG_PER_LDM, 1))
 
 
-def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, value_eur, optimization="fastest", truck=None):
+def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, value_eur, optimization="fastest", truck=None, required_paths=None, only_paths=None, wait_until=None):
     from .hub_selection import select_hubs, ll
     from .operations import parse
     net=ctx["network"]; operations=ctx["operations"]; ldm=_ldm(weight_kg)
     if ldm>13.6: raise ValueError("Shipment exceeds the prototype single-trailer capacity (13.6 loading metres). Split the shipment.")
     road=ctx["providers"].routing.leg(ll(net["nodes"][origin]),ll(net["nodes"][destination]))
-    blocked={e["node"] for e in operations.data["events"] if e["kind"]=="closure" and e.get("node") and operations.overlaps(e,depart_utc,depart_utc+timedelta(days=7))}
+    blocked={e["node"] for e in operations.data.get("events",[]) if e["kind"]=="closure" and e.get("node") and operations.overlaps(e,depart_utc,depart_utc+timedelta(days=7))}
     selected=select_hubs(net["nodes"][origin],net["nodes"][destination],net["nodes"].values(),road,ctx["providers"].routing,{"blocked":blocked,"ldm":ldm})
     paths=[([origin,destination],None)]+[([origin,h["hub"],destination],h) for h in selected]
+    for path in required_paths or []:
+        if all(n in net["nodes"] for n in path) and path not in [p for p,_ in paths]:
+            paths.append((path,None))
+    if only_paths is not None: paths=[(path,None) for path in only_paths]
     def build_option(path,hub,avoid=False):
-        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,depart_utc,path,operations,truck,avoid_zones=avoid)
+        actual_departure=parse(wait_until) if wait_until else depart_utc
+        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid)
+        if wait_until:
+            minutes=max(0,round((actual_departure-depart_utc).total_seconds()/60))
+            jr["depart_at"]=depart_utc.isoformat();jr["total_minutes"]+=minutes
+            jr["components"]["manager_wait"]=minutes
+            jr["steps"].insert(0,{"type":"manager_wait","location":origin,"location_name":net["nodes"][origin]["name"],"start":depart_utc.isoformat(),"end":actual_departure.isoformat(),"minutes":minutes,"detail":"Wait at departure facility, then re-evaluate loading and service eligibility","source":"MANAGER WAIT COMPARISON"})
+            jr["dispatch_action"]="wait";jr["dispatch_wait_until"]=wait_until
         # Use the SAME road distances for fuel, cost and map/ETA.
         cost_net={**net,"edges":dict(net["edges"])}
         for leg in jr["road_legs"]:
@@ -150,7 +161,10 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     from .optimization import decorate
     from .dispatch import connection_warnings
     options=decorate(options,ctx,origin,destination,ldm,optimization)
-    for option in options: option["connections"]=connection_warnings(option)
+    for option in options:
+        option["connections"]=connection_warnings(option)
+        if wait_until:
+            option["route_id"]+=":wait";option["label"]="Wait at departure facility"
     return options
 
 
@@ -174,6 +188,27 @@ def savings_vs_baseline(recommended, baseline):
         "time_min": baseline["total_minutes"] - recommended["total_minutes"],
         "note": "Estimated, not guaranteed — based on tariffs (relationen.csv) and current plan.",
     }
+
+
+def review_options(ctx, ship):
+    """One reproducible option set for review and approval, including a bounded wait."""
+    from .dispatch import connection_warnings
+    args=(ctx,ship["origin"],ship["destination"],parse(ship["planned_departure"]),ship["weight_kg"],
+          ship.get("required_delivery"),ship.get("value_eur",0),ship.get("optimization","fastest"),ship.get("truck"))
+    options=plan(*args,required_paths=[ship["route"]])
+    current=next((o for o in options if o["path"]==ship["route"] and o.get("avoidance_status")!="CLEAR"),None)
+    departure=parse(ship["planned_departure"])
+    if current and not ship.get("vehicle_position"):
+        zone_ids={z["id"] for z in current.get("zone_impacts",[])}
+        ends=[parse(z["end"]) for z in ctx["operations"].data.get("weather_zones",[]) if z["id"] in zone_ids]
+        ends.extend(parse(e["end"]) for e in ctx["operations"].data.get("events",[]) if e["kind"]=="closure" and e.get("node") in ship["route"] and parse(e["start"])<parse(current["eta"]) and parse(e["end"])>departure)
+        if ends:
+            release=max(ends)+timedelta(minutes=1)
+            if departure<release<=departure+timedelta(hours=24):
+                try: options.extend(plan(*args,only_paths=[ship["route"]],wait_until=release.isoformat()))
+                except ValueError: pass
+    for option in options: option["connections"]=connection_warnings(option,ship.get("accepted_plan"))
+    return options
 
 
 class Shipments:
@@ -287,7 +322,7 @@ class Shipments:
         if s.get("hold") and parse(s["planned_departure"])<datetime.now(timezone.utc):
             raise ValueError("The held departure is in the past. Recalculate before releasing the hold.")
         if opt.get("revision", -1) != ctx["operations"].data["revision"]: raise ValueError("Conditions changed. Recalculate the shipment before scheduling.")
-        fresh=plan(ctx,s["origin"],s["destination"],datetime.fromisoformat(s["planned_departure"].replace("Z","+00:00")),s["weight_kg"],s.get("required_delivery"),s.get("value_eur",0),s.get("optimization","fastest"),s.get("truck"))
+        fresh=review_options(ctx,s)
         candidate=next((o for o in fresh if o.get("route_id")==opt.get("route_id")),None)
         if candidate and candidate.get("avoidance_status") in {"IMPACTED", "NO_CLEAR_DETOUR"}:
             raise ValueError("Weather conditions changed. Hold the shipment and recalculate a clear route.")
@@ -363,7 +398,7 @@ class Shipments:
             # A resumed shipment cannot use its missed departure. The old
             # accepted plan remains intact for the manager's comparison.
             s["planned_departure"]=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()
-        s["options"]=plan(self.context_for(s),s["origin"],s["destination"],datetime.fromisoformat(s["planned_departure"].replace("Z","+00:00")),s["weight_kg"],s.get("required_delivery"),s.get("value_eur",0),s.get("optimization","fastest"),s.get("truck"))
+        s["options"]=review_options(self.context_for(s),s)
         from .dispatch import connection_warnings
         for option in s["options"]: option["connections"]=connection_warnings(option,s.get("accepted_plan"))
         s["plan_change"]=change_summary(s.get("accepted_plan"),s["options"][0])
