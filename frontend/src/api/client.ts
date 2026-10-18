@@ -6,6 +6,8 @@ async function req<T>(p: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 export const api = {
+  reportPosition:(id:string,body:{lat?:number;lon?:number;progress_percent?:number;source:"MANAGER REPORTED"|"DRIVER REPORTED"|"SIMULATION";movement_state:"MOVING"|"STOPPED"})=>req<Shipment>(`/shipments/${id}/position`,{method:"POST",body:JSON.stringify(body)}),
+  requestStop:(id:string,reason:string)=>req<Shipment>(`/shipments/${id}/stop-request`,{method:"POST",body:JSON.stringify({reason})}),
   services:()=>req<{services:Service[]}>("/services"),
   saveService:(body:Omit<Service,"id"|"source">)=>req<Service>("/services",{method:"POST",body:JSON.stringify(body)}),
   deleteService:(id:string)=>req(`/services/${id}`,{method:"DELETE"}),

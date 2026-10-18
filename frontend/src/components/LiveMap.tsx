@@ -228,6 +228,7 @@ export function LiveMap({
   path,
   geometry,
   comparisonGeometry,
+  completedGeometry,
   alternatives = [],
   onSelect,
   routeWeather = [],
@@ -248,6 +249,7 @@ export function LiveMap({
   path: string[];
   geometry?: number[][] | null;
   comparisonGeometry?: number[][][] | null;
+  completedGeometry?: number[][];
   alternatives?: RouteOption[];
   onSelect?: (i: number) => void;
   routeWeather?: LiveWeather[];
@@ -501,6 +503,10 @@ export function LiveMap({
     }
 
     if (!m.getSource("route")) {
+      if (!m.getSource("completed-road")) {
+        m.addSource("completed-road",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+        m.addLayer({id:"completed-road-line",type:"line",source:"completed-road",paint:{"line-color":"#7f8a92","line-width":5,"line-opacity":.7}});
+      }
       m.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       m.addLayer({
         id: "route-l",
@@ -586,6 +592,11 @@ export function LiveMap({
   }, [ready, styleVersion, altKey, alternatives]);
 
   const comparisonKey = useMemo(() => JSON.stringify(comparisonGeometry ?? []), [comparisonGeometry]);
+  useEffect(()=>{
+    const m=map.current;if(!m||!ready||loadedMap.current!==m)return;
+    const source=m.getSource("completed-road") as maplibregl.GeoJSONSource|undefined;
+    source?.setData({type:"FeatureCollection",features:completedGeometry&&completedGeometry.length>1?[{type:"Feature",properties:{},geometry:{type:"LineString",coordinates:completedGeometry}}]:[]});
+  },[ready,styleVersion,completedGeometry]);
   useEffect(() => {
     const m = map.current;
     if (!m || !ready || loadedMap.current !== m) return;

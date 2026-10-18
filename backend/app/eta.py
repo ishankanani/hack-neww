@@ -14,7 +14,7 @@ def _haversine_km(a,b):
     x=math.sin(dlat/2)**2+math.cos(math.radians(a[0]))*math.cos(math.radians(b[0]))*math.sin(dlon/2)**2
     return 12742*math.asin(min(1,math.sqrt(x)))
 
-def compute_journey(network, holidays, transfer, hub_delays, providers, origin, dest, depart_utc, path=None, operations=None, truck=None, avoid_zones=False):
+def compute_journey(network, holidays, transfer, hub_delays, providers, origin, dest, depart_utc, path=None, operations=None, truck=None, avoid_zones=False, skip_origin_handling=False):
     path = path or [origin,dest]
     applied_global_traffic=set()
     rows=[]; cur=depart_utc; geometry=[]; all_geometry=True; leg_data=[]; alerts=[]; forecasts=[]; traffic_sections=[]; services=[]; zone_impacts=[]; weather_detours=[]; detour_km=0
@@ -25,7 +25,8 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
         na,nb=network["nodes"][a],network["nodes"][b]
         arrival=cur
         h=transfer.get(na.get("relation"),{}).get("avg_transfer_minutes",120)
-        add("handling",a,cur,cur+timedelta(minutes=h),"Loading & handling" if i==0 else "Intermediate hub transfer","Historical proxy / 120-minute baseline")
+        if i==0 and skip_origin_handling:h=0
+        if h:add("handling",a,cur,cur+timedelta(minutes=h),"Loading & handling" if i==0 else "Intermediate hub transfer","Historical proxy / 120-minute baseline")
         comp["transfer"]+=h; cur+=timedelta(minutes=h)
         release=hub_release(arrival,cur,intermediate=i>0)
         if release>cur:
@@ -176,6 +177,7 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
             comp[kind]+=pause["minutes"]; t=pause["end"]
         if leg["arrival"]>t: add("drive",a,t,leg["arrival"],f"{na['name']} → {nb['name']} · {km} km"+(f" · +{traffic}m traffic" if traffic else ""),src)
         cur=leg["arrival"]; comp["transport"]+=drive
+        leg_data[-1].update({"geometry_start":geometry_start,"geometry_end":len(geometry)-1,"departure":departure.isoformat(),"arrival":cur.isoformat()})
         # A closed destination cannot receive the shipment; wait outside the facility.
         for _ in range(len(events)+1):
             closures=[e for e in events if e["kind"]=="closure" and e.get("node")==b and parse(e["start"])<=cur<parse(e["end"])]

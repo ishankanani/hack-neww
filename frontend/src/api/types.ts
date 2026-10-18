@@ -17,6 +17,7 @@ export interface Incident { id:string; geometry:{type:string;coordinates: number
 export interface MapConditions { weather:LiveWeather[]; incidents:{status:string;items:Incident[];fetched_at?:string}; traffic_configured:boolean; at:string; fetched_at:string; }
 export interface TruckProfile { height_m:number; width_m:number; length_m:number; gross_weight_kg:number; }
 export interface RouteOption {
+  remaining_only?:boolean;position_id?:string;vehicle_start?:{lat:number;lon:number;reported_at:string;source:string};completed_geometry?:number[][];completed_estimates?:OptCost;remaining_cost?:OptCost;
   dispatch_action?:"wait";dispatch_wait_until?:string;
   connections?:ConnectionWarning[];
   quote_id:string; route_id?:string; evaluated_at:string; valid_until:string; is_demo?:boolean; vehicle_constraints?:string;
@@ -39,6 +40,7 @@ export interface Provider { key: string; name: string; status: string; configure
 export interface RouteResp { revision?: number; options: RouteOption[]; recommended: number | null; savings: Savings | null; weather: WeatherObs[]; providers: Provider[]; evaluated_at: string; }
 
 export interface Shipment {
+  vehicle_position?:VehiclePosition;movement_started_at?:string;stop_request?:{status:"REQUESTED"|"ACKNOWLEDGED";reason:string;at:string;reference?:string};
   dispatch?:DispatchAttention;dispatch_actions?:DispatchAction[];
   delivery_confirmation?:{at:string;source:string;reference:string|null};
   hold?:{reason:string;at:string;route_id?:string;path:string[];previous_status:string;plan:RouteOption};
@@ -103,6 +105,7 @@ export interface Operations { revision: number; weather: WeatherRecord[]; weathe
 
 export interface Service { id:string; origin:string; destination:string; weekdays:number[]; departure_time:string; timezone:string; cutoff_minutes:number; source:string; }
 export interface ConnectionWarning { service_id:string;from:string;to:string;arrival:string;ready_at:string;cutoff_at:string;cutoff_minutes:number;buffer_minutes:number;wait_minutes:number;departure:string;source:string;status:"MISSED"|"TIGHT"|"ON TRACK";previous_departure:string|null;connection_delay_minutes:number; }
+export interface VehiclePosition { id:string;lat:number;lon:number;reported_at:string;source:string;movement_state:"MOVING"|"STOPPED";base_quote_id:string;offset_km:number;completed_geometry:number[][];remaining_path:string[];completed_estimates:OptCost;note:string; }
 export interface DispatchAttention { priority:string;score:number;reasons:string[];connections:(ConnectionWarning&{projected_buffer_minutes:number})[];weather_zone_ids:string[];decision_by:string|null;note?:string; }
 export interface DispatchAction { action:"continue"|"reroute"|"wait";option_index:number|null;available:boolean;reason:string;eta:string|null;deadline_ok:boolean|null;distance_km:number|null;transport_eur:number|null;fuel_l:number|null;wait_until:string|null;delta:{km:number;transport_eur:number;fuel_l:number;arrival_minutes:number}|null; }
 export interface PlanChange { material:boolean; reasons:string[]; eta_minutes:number; cost_eur:number; previous_eta?:string; proposed_eta?:string; previous_cost?:number; proposed_cost?:number; evaluated_at?:string; }

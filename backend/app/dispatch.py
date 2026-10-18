@@ -44,7 +44,13 @@ def attention(ship, operations, pending_minutes=0, closures=(), at=None):
     if plan.get("geometry") and ship.get("status")!="ARRIVAL EXPECTED":
         start=max(at,parse(plan["depart_at"]))
         end=max(start+timedelta(minutes=1),parse(plan["eta"]))
-        zones=crossed_zones(plan["geometry"],active_zones(operations,start,end),CLEARANCE_KM)
+        geometry=plan["geometry"]
+        if ship.get("vehicle_position"):
+            from .progress import snap
+            position=ship["vehicle_position"]
+            _,index,point,_=snap(geometry,[position["lon"],position["lat"]])
+            geometry=[point,*geometry[index+1:]]
+        zones=crossed_zones(geometry,active_zones(operations,start,end),CLEARANCE_KM)
     if zones:
         score=max(score,100);reasons.append(f"Approved road intersects {len(zones)} active weather zone(s); refresh clearance")
     if closures:
@@ -83,9 +89,10 @@ def attention(ship, operations, pending_minutes=0, closures=(), at=None):
 
 def action_comparison(ship):
     options=ship.get("options",[]); approved=ship.get("accepted_plan") or {}
+    current_path=ship.get("vehicle_position",{}).get("remaining_path",ship["route"])
     current=next((i for i,o in enumerate(options) if o.get("dispatch_action")!="wait" and o.get("route_id")==approved.get("route_id")),None)
     if current is None:
-        current=next((i for i,o in enumerate(options) if o.get("dispatch_action")!="wait" and o["path"]==ship["route"] and o.get("avoidance_status")!="CLEAR"),None)
+        current=next((i for i,o in enumerate(options) if o.get("dispatch_action")!="wait" and o["path"]==current_path and o.get("avoidance_status")!="CLEAR"),None)
     reroute=next((i for i,o in enumerate(options) if i!=current and o.get("dispatch_action")!="wait" and approvable(o)),None)
     wait=next((i for i,o in enumerate(options) if o.get("dispatch_action")=="wait" and approvable(o)),None)
     baseline=options[current] if current is not None else None

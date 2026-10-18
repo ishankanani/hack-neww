@@ -546,6 +546,45 @@ def replan_shipment(sid: str):
         s=S["ships"].replan(sid)
         return {**s,"dispatch_actions":action_comparison(s)}
 
+
+class PositionReq(BaseModel):
+    lat: Optional[float] = Field(default=None,ge=-85,le=85,allow_inf_nan=False)
+    lon: Optional[float] = Field(default=None,ge=-180,le=180,allow_inf_nan=False)
+    source: Literal["DRIVER REPORTED","MANAGER REPORTED","SIMULATION"] = "MANAGER REPORTED"
+    reported_at: Optional[AwareDatetime] = None
+    progress_percent: Optional[float] = Field(default=None,ge=0,le=100,allow_inf_nan=False)
+    movement_state: Literal["MOVING","STOPPED"] = "MOVING"
+    @model_validator(mode="after")
+    def coordinates(self):
+        if self.progress_percent is None and (self.lat is None or self.lon is None):raise ValueError("Provide coordinates or a simulation percentage")
+        if self.source=="SIMULATION" and self.progress_percent is None:raise ValueError("Simulation requires an explicit progress percentage")
+        return self
+
+
+@app.post("/api/shipments/{sid}/position")
+@serialized
+def update_position(sid:str,req:PositionReq):
+    if not S["ships"].get(sid):raise HTTPException(404,"Unknown shipment")
+    ship=S["ships"].update_position(sid,req.model_dump(mode="json"))
+    _audit("vehicle_position",f"{sid}: {ship['vehicle_position']['source']}",ship["vehicle_position"]["source"])
+    return {**ship,"dispatch_actions":[]}
+
+
+class StopReq(BaseModel):
+    reason:str=Field(min_length=3,max_length=1000)
+
+
+@app.post("/api/shipments/{sid}/stop-request")
+@serialized
+def request_stop(sid:str,req:StopReq):
+    from .progress import dispatched
+    ship=S["ships"].get(sid)
+    if not ship:raise HTTPException(404,"Unknown shipment")
+    if not dispatched(ship):raise ValueError("Use a departure hold for a journey that has not departed")
+    S["ships"].hold(sid,0,req.reason)
+    S["operations"].put("decisions",{"shipment_id":sid,"action":"stop_request","reason":req.reason.strip(),"path":ship["route"],"eta":ship["current_eta"],"data_kind":ship.get("data_kind","user")})
+    return {**ship,"dispatch_actions":action_comparison(ship)}
+
 @app.post("/api/decisions")
 @serialized
 def decision(req: DecisionReq):

@@ -109,7 +109,7 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     if only_paths is not None: paths=[(path,None) for path in only_paths]
     def build_option(path,hub,avoid=False):
         actual_departure=parse(wait_until) if wait_until else depart_utc
-        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid)
+        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid,skip_origin_handling=ctx.get("skip_origin_handling",False))
         if wait_until:
             minutes=max(0,round((actual_departure-depart_utc).total_seconds()/60))
             jr["depart_at"]=depart_utc.isoformat();jr["total_minutes"]+=minutes
@@ -193,10 +193,15 @@ def savings_vs_baseline(recommended, baseline):
 def review_options(ctx, ship):
     """One reproducible option set for review and approval, including a bounded wait."""
     from .dispatch import connection_warnings
-    args=(ctx,ship["origin"],ship["destination"],parse(ship["planned_departure"]),ship["weight_kg"],
+    from .progress import dispatched,position_context,attach_completed,VEHICLE_NODE
+    remaining=dispatched(ship)
+    if remaining:ctx=position_context(ctx,ship)
+    origin=VEHICLE_NODE if remaining else ship["origin"]
+    path=ship["vehicle_position"]["remaining_path"] if remaining else ship["route"]
+    args=(ctx,origin,ship["destination"],datetime.now(timezone.utc) if remaining else parse(ship["planned_departure"]),ship["weight_kg"],
           ship.get("required_delivery"),ship.get("value_eur",0),ship.get("optimization","fastest"),ship.get("truck"))
-    options=plan(*args,required_paths=[ship["route"]])
-    current=next((o for o in options if o["path"]==ship["route"] and o.get("avoidance_status")!="CLEAR"),None)
+    options=plan(*args,required_paths=[path])
+    current=next((o for o in options if o["path"]==path and o.get("avoidance_status")!="CLEAR"),None)
     departure=parse(ship["planned_departure"])
     if current and not ship.get("vehicle_position"):
         zone_ids={z["id"] for z in current.get("zone_impacts",[])}
@@ -208,6 +213,9 @@ def review_options(ctx, ship):
                 try: options.extend(plan(*args,only_paths=[ship["route"]],wait_until=release.isoformat()))
                 except ValueError: pass
     for option in options: option["connections"]=connection_warnings(option,ship.get("accepted_plan"))
+    if remaining:
+        for option in options:option["baseline_snapshot"]=deepcopy(option.get("baseline_snapshot",{}))
+        for option in options:attach_completed(option,ship["vehicle_position"])
     return options
 
 
@@ -312,14 +320,19 @@ class Shipments:
         s = self.data.get(sid)
         if not s:
             return None, "unknown shipment"
-        if s["status"] in {"IN TRANSIT", "DELIVERED"}: raise ValueError("Scheduling changes are supported before dispatch only")
+        from .progress import dispatched,position_context
+        if s["status"]=="DELIVERED":raise ValueError("Delivery is already confirmed")
+        moving=dispatched(s)
+        if moving:
+            position_context(self.context_for(s),s)
         if not 0 <= option_index < len(s["options"]): raise ValueError("Invalid route option")
         opt = s["options"][option_index]
+        if moving and opt.get("position_id")!=s["vehicle_position"]["id"]:raise ValueError("Vehicle position changed. Recalculate remaining route before approval")
         if opt.get("avoidance_status") in {"IMPACTED", "NO_CLEAR_DETOUR"}:
             raise ValueError("Route crosses an active simulated weather zone. Hold the shipment or choose a clear route.")
         if quote_id is not None and quote_id!=opt.get("quote_id"): raise ValueError("This quote was replaced. Recalculate and review again.")
         ctx=self.context_for(s)
-        if s.get("hold") and parse(s["planned_departure"])<datetime.now(timezone.utc):
+        if s.get("hold") and not moving and parse(s["planned_departure"])<datetime.now(timezone.utc):
             raise ValueError("The held departure is in the past. Recalculate before releasing the hold.")
         if opt.get("revision", -1) != ctx["operations"].data["revision"]: raise ValueError("Conditions changed. Recalculate the shipment before scheduling.")
         fresh=review_options(ctx,s)
@@ -362,8 +375,10 @@ class Shipments:
                     "basis": "Previously approved path re-evaluated under the conditions in force at approval",
                 }
         s["options"] = fresh
+        s.setdefault("approval_history",[]).append({"quote_id":previous_plan.get("quote_id"),"path":previous_plan.get("path"),"eta":previous_plan.get("eta"),"at":s.get("approved_at"),"reason":s.get("approval_reason")})
         s.pop("hold",None)
-        s.update({"status": "SCHEDULED", "approval_reason":decision_reason, "scheduled_departure": next((step["start"] for step in approved["steps"] if step["type"]=="drive"),s["planned_departure"]),
+        if moving:s.pop("stop_request",None)
+        s.update({"status": "IN TRANSIT" if moving else "SCHEDULED", "approval_reason":decision_reason, "scheduled_departure": s.get("scheduled_departure") if moving else next((step["start"] for step in approved["steps"] if step["type"]=="drive"),s["planned_departure"]),
                   "route": approved["path"], "current_eta": approved["eta"],
                   "est_cost_eur": approved["cost"]["transport_eur"], "est_fuel_l": approved["cost"]["fuel_l"],
                   "risk_level": approved["risk"]["level"], "selected_option": approved_index, "accepted_plan": deepcopy(approved), "approved_at":datetime.now(timezone.utc).isoformat(), "plan_change":None,
@@ -374,11 +389,16 @@ class Shipments:
 
     def hold(self, sid, option_index, reason):
         s=self.data[sid]
-        if s["status"] in {"IN TRANSIT","DELAYED","DELIVERED"}:
-            raise ValueError("Manager holds are supported before dispatch only")
+        from .progress import dispatched
+        if s["status"]=="DELIVERED":raise ValueError("Delivery is already confirmed")
         if not reason.strip() or len(reason.strip())<3: raise ValueError("Enter a reason for the hold")
         if not 0<=option_index<len(s["options"]): raise ValueError("Invalid route option")
         opt=s["options"][option_index]
+        if dispatched(s) and not s.get("hold"):
+            s["stop_request"]={"status":"REQUESTED","reason":reason.strip(),"at":datetime.now(timezone.utc).isoformat(),"path":list(opt["path"])}
+            s["alert"]="Safe-stop request awaiting driver acknowledgement"
+            _save(self.data)
+            return s
         # Store the exact reviewed route separately. A hold does not approve an
         # unsafe plan or overwrite an earlier approved route/ETA.
         s["hold"]={"reason":reason.strip(),"at":datetime.now(timezone.utc).isoformat(),
@@ -392,9 +412,9 @@ class Shipments:
 
     def replan(self, sid):
         s=self.data[sid]
-        if s["status"] in ("IN TRANSIT","DELIVERED"):
-            raise ValueError("Prototype replanning is supported before dispatch only")
-        if s.get("hold") and parse(s["planned_departure"])<datetime.now(timezone.utc):
+        from .progress import dispatched
+        if s["status"]=="DELIVERED":raise ValueError("Delivery is already confirmed")
+        if s.get("hold") and not dispatched(s) and parse(s["planned_departure"])<datetime.now(timezone.utc):
             # A resumed shipment cannot use its missed departure. The old
             # accepted plan remains intact for the manager's comparison.
             s["planned_departure"]=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()
@@ -402,6 +422,17 @@ class Shipments:
         from .dispatch import connection_warnings
         for option in s["options"]: option["connections"]=connection_warnings(option,s.get("accepted_plan"))
         s["plan_change"]=change_summary(s.get("accepted_plan"),s["options"][0])
+        _save(self.data)
+        return s
+
+    def update_position(self,sid,report):
+        from .progress import position_report
+        s=self.data[sid]
+        position=position_report(s,self.ctx["network"],**report)
+        s["vehicle_position"]=position
+        s.setdefault("movement_started_at",s.get("scheduled_departure") or datetime.now(timezone.utc).isoformat())
+        s.setdefault("driver_updates",[]).append({"kind":"position","reported_at":position["reported_at"],"source":position["source"],"lat":position["lat"],"lon":position["lon"],"movement_state":position["movement_state"]})
+        if not s.get("hold"):s["status"]="IN TRANSIT"
         _save(self.data)
         return s
 
