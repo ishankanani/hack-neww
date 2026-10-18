@@ -1,3 +1,4 @@
+import "./dispatch.css";
 import { useEffect, useRef, useState } from "react";
 import { Truck, Route, PiggyBank, BarChart3, RefreshCw, ShieldCheck, CloudSun, BookOpen, ArrowUpRight, Activity } from "lucide-react";
 import { api } from "./api/client";

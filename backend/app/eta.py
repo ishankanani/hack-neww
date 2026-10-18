@@ -118,7 +118,13 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
             comp["hub_delay"]+=round((end-cur).total_seconds()/60); cur=end
         departure,service=next_departure(cur,a,b,schedules,holidays,events)
         if service:
-            services.append({"service_id":service.get("id"),"from":a,"to":b,"departure":departure.isoformat(),"source":service["source"]})
+            cutoff=departure-timedelta(minutes=service["cutoff_minutes"])
+            services.append({"service_id":service.get("id"),"from":a,"to":b,
+                             "arrival":arrival.isoformat(),"ready_at":cur.isoformat(),
+                             "cutoff_at":cutoff.isoformat(),"cutoff_minutes":service["cutoff_minutes"],
+                             "buffer_minutes":round((cutoff-cur).total_seconds()/60),
+                             "wait_minutes":round((departure-cur).total_seconds()/60),
+                             "departure":departure.isoformat(),"source":service["source"]})
             if departure>cur:
                 add("schedule_wait",a,cur,departure,f"Next service {service['departure_time']} {service['timezone']} · cutoff {service['cutoff_minutes']}m",service["source"])
                 comp["schedule_wait"]+=round((departure-cur).total_seconds()/60)

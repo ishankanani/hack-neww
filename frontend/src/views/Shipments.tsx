@@ -36,7 +36,7 @@ export function Shipments({ nodes }: { nodes: NetNode[] }) {
           <dl>
             <div><dt>ID</dt><dd>App-generated reference for this shipment record.</dd></div>
             <div><dt>Route</dt><dd>The planned branch-to-branch path; arrows show any intermediate hub stops.</dd></div>
-            <div><dt>Status</dt><dd>PLANNED awaits approval. ON HOLD stays paused until a fresh clear route is approved. SCHEDULED moves to IN TRANSIT at departure, DELAYED if its deadline passes, and DELIVERED after its ETA.</dd></div>
+            <div><dt>Status</dt><dd>PLANNED awaits approval. ON HOLD stays paused until a fresh clear route is approved. SCHEDULED moves to IN TRANSIT at departure, DELAYED if its deadline passes, and ARRIVAL EXPECTED after its ETA. DELIVERED requires a recorded confirmation.</dd></div>
             <div><dt>ETA / Required</dt><dd>ETA is the estimated arrival; Required is the delivery deadline entered for the shipment.</dd></div>
             <div><dt>Delay</dt><dd>How late the estimated arrival is against the required deadline. A dash means it is not currently late.</dd></div>
             <div><dt>Weight / Value</dt><dd>Shipment inputs used for capacity, estimated cost and risk calculations.</dd></div>
@@ -47,7 +47,7 @@ export function Shipments({ nodes }: { nodes: NetNode[] }) {
           <p>Time-based statuses are estimates, not live GPS or proof of delivery. The list refreshes every minute. Select a row to compare route options and schedule one.</p>
         </details>
         <div className="filters">
-          <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}><option value="">All statuses</option>{["PLANNED", "SCHEDULED", "ON HOLD", "IN TRANSIT", "DELAYED", "DELIVERED"].map((s) => <option key={s}>{s}</option>)}</select>
+          <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}><option value="">All statuses</option>{["PLANNED", "SCHEDULED", "ON HOLD", "IN TRANSIT", "DELAYED", "ARRIVAL EXPECTED", "DELIVERED"].map((s) => <option key={s}>{s}</option>)}</select>
           <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.at_risk} onChange={(e) => setF({ ...f, at_risk: e.target.checked })} /> At risk</label>
           <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.high_value} onChange={(e) => setF({ ...f, high_value: e.target.checked })} /> High-value</label>
           <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.delayed} onChange={(e) => setF({ ...f, delayed: e.target.checked })} /> Delayed</label>
@@ -60,7 +60,7 @@ export function Shipments({ nodes }: { nodes: NetNode[] }) {
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => api.shipment(s.id).then(setDetail)}>
                   <td><b>{s.id}</b></td>
                   <td>{s.route.map(name).join(" → ")}</td>
-                  <td><span className={stCls(s.status)} title={s.status === "DELIVERED" ? "Inferred because the planned ETA has passed; actual delivery is unverified." : undefined}>{s.status}</span></td>
+                  <td><span className={stCls(s.status)} title={s.status === "ARRIVAL EXPECTED" ? "The estimated arrival has passed. Delivery confirmation is outstanding." : undefined}>{s.status}</span></td>
                   <td>{dt(s.current_eta)}</td><td style={{ color: "var(--muted)" }}>{dt(s.required_delivery)}</td>
                   <td className="num">{s.delay_minutes ? <span style={{ color: "var(--bad)", fontWeight: 700 }}>{hm(s.delay_minutes)}</span> : "—"}</td>
                   <td className="num">{(s.weight_kg / 1000).toFixed(1)}t</td><td className="num">{eur(s.value_eur)}</td><td className="num">{eur(s.est_cost_eur)}</td>

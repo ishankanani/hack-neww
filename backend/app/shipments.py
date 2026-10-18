@@ -148,7 +148,10 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     with ThreadPoolExecutor(max_workers=min(4,len(paths))) as pool:
         options=[option for group in pool.map(evaluate_path,paths) for option in group]
     from .optimization import decorate
-    return decorate(options,ctx,origin,destination,ldm,optimization)
+    from .dispatch import connection_warnings
+    options=decorate(options,ctx,origin,destination,ldm,optimization)
+    for option in options: option["connections"]=connection_warnings(option)
+    return options
 
 
 def _hist_summary(lane_hist):
@@ -179,6 +182,9 @@ class Shipments:
         self.data = _load()
         migrated = False
         for ship in self.data.values():
+            if ship.get("status")=="DELIVERED" and not ship.get("actual") and not ship.get("delivery_confirmation"):
+                ship["status"]="ARRIVAL EXPECTED" if ship.get("approved_at") else "PLANNED"
+                migrated=True
             if "accepted_plan" not in ship:
                 ship["accepted_plan"] = next((o for o in ship.get("options",[]) if o["path"] == ship["route"]), None)
             if not ship.get("data_kind"):
@@ -358,6 +364,8 @@ class Shipments:
             # accepted plan remains intact for the manager's comparison.
             s["planned_departure"]=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()
         s["options"]=plan(self.context_for(s),s["origin"],s["destination"],datetime.fromisoformat(s["planned_departure"].replace("Z","+00:00")),s["weight_kg"],s.get("required_delivery"),s.get("value_eur",0),s.get("optimization","fastest"),s.get("truck"))
+        from .dispatch import connection_warnings
+        for option in s["options"]: option["connections"]=connection_warnings(option,s.get("accepted_plan"))
         s["plan_change"]=change_summary(s.get("accepted_plan"),s["options"][0])
         _save(self.data)
         return s
@@ -368,13 +376,16 @@ class Shipments:
         if s:
             if s.get("hold"): raise ValueError("Shipment is on hold. Recalculate and approve a clear route in the control room to release it.")
             if status in {"SCHEDULED","IN TRANSIT"} and not s.get("approved_at"): raise ValueError("A manager must approve a plan first")
+            if status=="DELIVERED":
+                if not s.get("approved_at"): raise ValueError("Approve the shipment before confirming delivery")
+                s["delivery_confirmation"]={"at":datetime.now(timezone.utc).isoformat(),"source":"MANAGER REPORTED","reference":None}
             s["status"] = status; _save(self.data)
         return s
 
     def record_outcome(self, sid, outcome):
         s=self.data[sid]
-        if s["status"]!="DELIVERED": raise ValueError("Mark the shipment delivered before recording actual results")
         if not s.get("approved_at"): raise ValueError("Actual comparison requires a manager-approved plan")
+        if s.get("hold"): raise ValueError("Release the hold and confirm movement before recording delivery")
         baseline=s["accepted_plan"]
         departure=datetime.fromisoformat(outcome["actual_departure"])
         arrival=datetime.fromisoformat(outcome["actual_arrival"])
@@ -383,7 +394,10 @@ class Shipments:
         error=round((arrival-datetime.fromisoformat(baseline["eta"])).total_seconds()/60)
         actual={**outcome,"recorded_at":datetime.now(timezone.utc).isoformat(),"arrival_error_minutes":error,"cost_error_eur":round(outcome["actual_cost_eur"]-baseline["cost"]["transport_eur"],2),"on_time":arrival<=datetime.fromisoformat(s["required_delivery"]) if s.get("required_delivery") else None,"source":"DEMO OUTCOME" if s.get("data_kind")=="demo" else "USER-REPORTED ACTUAL","accepted_quote_id":baseline.get("quote_id")}
         s.setdefault("outcome_history",[]).append(deepcopy(actual))
-        s["actual"]=actual; _save(self.data)
+        s["actual"]=actual
+        s["status"]="DELIVERED"
+        s["delivery_confirmation"]={"at":outcome["actual_arrival"],"source":actual["source"],"reference":outcome.get("delivery_reference")}
+        _save(self.data)
         return s
 
     def list(self):
@@ -411,7 +425,7 @@ def _delay(eta, required):
 
 def _advance_time_status(ship, at=None):
     """Advance approved shipments using the plan clock; this is not GPS proof."""
-    if ship.get("status") not in {"SCHEDULED", "IN TRANSIT", "DELAYED"}:
+    if ship.get("status") not in {"SCHEDULED", "IN TRANSIT", "DELAYED", "ARRIVAL EXPECTED"}:
         return False
     at = at or datetime.now(timezone.utc)
     try:
@@ -419,7 +433,7 @@ def _advance_time_status(ship, at=None):
     except (KeyError, TypeError, ValueError):
         return False
     if eta <= at:
-        next_status = "DELIVERED"
+        next_status = "DELIVERED" if ship.get("delivery_confirmation") or ship.get("actual") else "ARRIVAL EXPECTED"
     else:
         try:
             deadline = parse(ship["required_delivery"]) if ship.get("required_delivery") else None

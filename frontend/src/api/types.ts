@@ -17,6 +17,7 @@ export interface Incident { id:string; geometry:{type:string;coordinates: number
 export interface MapConditions { weather:LiveWeather[]; incidents:{status:string;items:Incident[];fetched_at?:string}; traffic_configured:boolean; at:string; fetched_at:string; }
 export interface TruckProfile { height_m:number; width_m:number; length_m:number; gross_weight_kg:number; }
 export interface RouteOption {
+  connections?:ConnectionWarning[];
   quote_id:string; route_id?:string; evaluated_at:string; valid_until:string; is_demo?:boolean; vehicle_constraints?:string;
   avoidance_status?:"CLEAR"|"IMPACTED"|"NO_ZONE"|"NO_CLEAR_DETOUR"; zone_impacts?:{id:string;kind:string;radius_km:number;delay_minutes:number}[]; detour_km?:number;
   weather_detours?:{from:string;to:string;original_segment:number[][];detour_segment:number[][];divert_at:number[];rejoin_at:number[];extra_km:number}[];
@@ -37,6 +38,7 @@ export interface Provider { key: string; name: string; status: string; configure
 export interface RouteResp { revision?: number; options: RouteOption[]; recommended: number | null; savings: Savings | null; weather: WeatherObs[]; providers: Provider[]; evaluated_at: string; }
 
 export interface Shipment {
+  delivery_confirmation?:{at:string;source:string;reference:string|null};
   hold?:{reason:string;at:string;route_id?:string;path:string[];previous_status:string;plan:RouteOption};
   disruption_savings?:DisruptionSavings|null;
   accepted_plan?:RouteOption; approved_at?:string; data_kind?:string; demo_session?:string; plan_change?:PlanChange|null; actual?:ActualOutcome;
@@ -98,6 +100,7 @@ export interface WeatherZone extends WeatherZoneInput {id:string; updated_at:str
 export interface Operations { revision: number; weather: WeatherRecord[]; weather_zones: WeatherZone[]; events: ScenarioEvent[]; decisions: Decision[]; }
 
 export interface Service { id:string; origin:string; destination:string; weekdays:number[]; departure_time:string; timezone:string; cutoff_minutes:number; source:string; }
+export interface ConnectionWarning { service_id:string;from:string;to:string;arrival:string;ready_at:string;cutoff_at:string;cutoff_minutes:number;buffer_minutes:number;wait_minutes:number;departure:string;source:string;status:"MISSED"|"TIGHT"|"ON TRACK";previous_departure:string|null;connection_delay_minutes:number; }
 export interface PlanChange { material:boolean; reasons:string[]; eta_minutes:number; cost_eur:number; previous_eta?:string; proposed_eta?:string; previous_cost?:number; proposed_cost?:number; evaluated_at?:string; }
 export interface ActualOutcome { actual_departure:string; actual_arrival:string; actual_cost_eur:number; arrival_error_minutes:number; cost_error_eur:number; on_time:boolean|null; source:string; }
 export interface ActualEvidence { id:string;route:string[];quote_id:string;approved_at:string;recorded_at:string|null;approved_eta:string;actual_arrival:string;actual_cost_eur:number;approved_cost_eur:number;arrival_error_minutes:number;cost_error_eur:number;on_time:boolean|null;source:string; }
