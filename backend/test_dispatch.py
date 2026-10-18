@@ -4,6 +4,7 @@ from datetime import datetime,timedelta,timezone
 from app.dispatch import connection_warnings
 from app.dispatch import action_comparison, attention
 from types import SimpleNamespace
+from test_combined import client
 from app.shipments import _advance_time_status
 
 
@@ -48,3 +49,38 @@ def test_attention_explains_connection_exposure_without_mutating_plan():
     assert result["priority"]=="CRITICAL"
     assert result["connections"][0]["projected_buffer_minutes"]==-15
     assert ship==previous
+
+
+def test_bounded_wait_on_a_via_hub_itinerary_can_be_reviewed_and_approved(client,monkeypatch):
+    from app import eta
+    from app.weather_routes import _point_at,_route_length
+    monkeypatch.setattr(eta,"closest_clear_detour",lambda *args,**kwargs:None)
+    departure=datetime(2026,10,20,6,tzinfo=timezone.utc)
+    ship=client.post("/api/shipments",json={"origin":"R16","destination":"R21","planned_departure":departure.isoformat(),"weight_kg":8000}).json()
+    index=next(i for i,o in enumerate(ship["options"]) if len(o["path"])==3)
+    option=ship["options"][index]
+    approved=client.post("/api/decisions",json={"shipment_id":ship["id"],"action":"accept","option":index,"revision":option["revision"],"quote_id":option["quote_id"],"reason":"Approve via hub itinerary","acknowledge_deadline":True})
+    assert approved.status_code==200,approved.text
+    lon,lat=_point_at(option["geometry"],_route_length(option["geometry"])*.3)
+    zone=client.post("/api/weather-zones",json={"kind":"tornado","lat":lat,"lon":lon,"radius_km":8,"start":departure.isoformat(),"end":(departure+timedelta(hours=12)).isoformat()})
+    assert zone.status_code==200,zone.text
+    reviewed=client.post(f"/api/shipments/{ship['id']}/replan")
+    assert reviewed.status_code==200,reviewed.text
+    rows=reviewed.json();wait_index=next(i for i,o in enumerate(rows["options"]) if o.get("dispatch_action")=="wait")
+    wait=rows["options"][wait_index]
+    assert len(wait["path"])==3 and wait["avoidance_status"]=="NO_ZONE"
+    assert wait["steps"][0]["type"]=="manager_wait"
+    assert wait["comparison"]["baseline"].startswith("Current itinerary")
+    result=client.post("/api/decisions",json={"shipment_id":ship["id"],"action":"accept","option":wait_index,"revision":wait["revision"],"quote_id":wait["quote_id"],"reason":"Wait until weather zone expires","acknowledge_deadline":True})
+    assert result.status_code==200,result.text
+
+
+def test_ui_review_can_reschedule_a_missed_unstarted_departure(client):
+    past=(datetime.now(timezone.utc)-timedelta(days=2)).isoformat()
+    ship=client.post("/api/shipments",json={"origin":"R16","destination":"R21","planned_departure":past,"weight_kg":8000}).json()
+    reviewed=client.post(f"/api/shipments/{ship['id']}/replan?from_now=true")
+    assert reviewed.status_code==200,reviewed.text
+    row=reviewed.json()
+    assert datetime.fromisoformat(row["planned_departure"])>datetime.now(timezone.utc)
+    assert row["accepted_plan"]==ship["accepted_plan"]
+    assert row["status"]=="PLANNED"

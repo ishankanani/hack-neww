@@ -75,7 +75,7 @@ def position_context(ctx, ship, at=None):
     nodes=dict(ctx["network"]["nodes"])
     nodes[VEHICLE_NODE]={"id":VEHICLE_NODE,"name":"Reported vehicle position","lat":position["lat"],"lon":position["lon"],"type":"branch","source":position["source"],"transfer_enabled":False}
     return {**ctx,"network":{**ctx["network"],"nodes":nodes},"skip_origin_handling":True,
-            "is_demo":ctx.get("is_demo",False) or position["source"]=="SIMULATION"}
+            "is_demo":ctx.get("is_demo",False) or ship.get("simulation_used",False) or position["source"]=="SIMULATION"}
 
 
 def attach_completed(option, position):

@@ -3,6 +3,7 @@ import { Plus, X, AlertTriangle, CheckCircle2, Truck } from "lucide-react";
 import { api } from "../api/client";
 import type { NetNode, Shipment } from "../api/types";
 import { eur, dt, hm, riskCls, stCls, localInput } from "../lib";
+import { VehicleProgress } from "../components/VehicleProgress";
 import { ActualOutcome } from "../components/ActualOutcome";
 import { PlanChangeNotice } from "../components/PlanChangeNotice";
 import { RouteCompare } from "../components/RouteCompare";
@@ -124,11 +125,11 @@ function Drawer({ nodes, shipment, onClose, onChanged }: { nodes: NetNode[]; shi
       <PlanChangeNotice saved={s.accepted_plan} proposed={s.options?.[selected]}/>
       <div className="drawer-reason"><label>Manager decision reason<input value={reason} onChange={e=>setReason(e.target.value)} placeholder="Explain this route choice"/></label></div>
       <div style={{ display: "flex", gap: 8, padding: "0 16px 12px" }}>
-        <button className="btn btn--sm" disabled={busy||reason.trim().length<3||s.status==="DELIVERED"||s.status==="IN TRANSIT"} onClick={() => sched(false)}><CheckCircle2 size={14} /> Schedule selected</button>
-        {!s.options?.[selected]?.risk.deadline_ok && <button className="btn btn--ghost btn--sm" disabled={busy||reason.trim().length<3||s.status==="DELIVERED"||s.status==="IN TRANSIT"} onClick={() => sched(true)}>Schedule anyway</button>}
+        <button className="btn btn--sm" disabled={busy||reason.trim().length<3||s.status==="DELIVERED"||((!!s.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(s.status))&&!s.options?.[selected]?.remaining_only)} onClick={() => sched(false)}><CheckCircle2 size={14} /> Schedule selected</button>
+        {!s.options?.[selected]?.risk.deadline_ok && <button className="btn btn--ghost btn--sm" disabled={busy||reason.trim().length<3||s.status==="DELIVERED"||((!!s.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(s.status))&&!s.options?.[selected]?.remaining_only)} onClick={() => sched(true)}>Schedule anyway</button>}
       </div>
-      <ActualOutcome shipment={s} onChange={onChanged}/>
-      {s.options && <div className="card">{<RouteCompare nodes={nodes} options={s.options} selected={selected} onSelect={setSelected} onRefresh={()=>{if(!busy){setBusy(true);api.replan(s.id).then(onChanged).catch(e=>setMsg(String(e))).finally(()=>setBusy(false))}}} />}</div>}
+      <VehicleProgress key={s.id} shipment={s} onChanged={()=>onChanged()}/><div className="driver-view-link">{s.approved_at&&<a href={`#driver/${encodeURIComponent(s.id)}`}>Open driver update view ↗</a>}</div><ActualOutcome shipment={s} onChange={onChanged}/>
+      {s.options && <div className="card">{<RouteCompare nodes={nodes} showJourneyTools={false} options={s.options} selected={selected} onSelect={setSelected} onRefresh={()=>{if(!busy){setBusy(true);api.replan(s.id).then(onChanged).catch(e=>setMsg(String(e))).finally(()=>setBusy(false))}}} />}</div>}
     </div></div>
   );
 }

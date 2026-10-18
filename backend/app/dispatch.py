@@ -52,7 +52,7 @@ def attention(ship, operations, pending_minutes=0, closures=(), at=None):
             geometry=[point,*geometry[index+1:]]
         zones=crossed_zones(geometry,active_zones(operations,start,end),CLEARANCE_KM)
     if zones:
-        score=max(score,100);reasons.append(f"Approved road intersects {len(zones)} active weather zone(s); refresh clearance")
+        score=max(score,100);reasons.append(f"{'Approved' if ship.get('approved_at') else 'Saved'} road intersects {len(zones)} active weather zone(s); refresh clearance")
     if closures:
         score=max(score,95);reasons.append("Closure affects a pending facility visit")
     for service in remaining_connections(plan,at):
@@ -101,7 +101,7 @@ def action_comparison(ship):
         opt=options[index] if index is not None else None
         clear=bool(opt and approvable(opt))
         rows.append({"action":action,"option_index":index,"available":clear,
-                     "reason":("Delay departure, then recheck the full itinerary" if action=="wait" else "Fresh evaluation of the approved itinerary" if action=="continue" else "Clear alternative checked against current conditions") if clear else
+                     "reason":("Delay departure, then recheck the full itinerary" if action=="wait" else "Fresh evaluation of the current itinerary" if action=="continue" else "Clear alternative checked against current conditions") if clear else
                               "Route affected or capacity unavailable" if opt else "No comparable alternative found" if action=="reroute" else "No bounded wait can be verified from the current inputs" if action=="wait" else "Current itinerary could not be reproduced",
                      "eta":opt["eta"] if opt else None,"deadline_ok":opt["risk"]["deadline_ok"] if opt else None,
                      "distance_km":opt["cost"]["distance_km"] if opt else None,"transport_eur":opt["cost"]["transport_eur"] if opt else None,

@@ -9,18 +9,20 @@ import { Planner } from "./views/Planner";
 import { Savings } from "./views/Savings";
 import { Analytics } from "./views/Analytics";
 import { ControlRoom } from "./views/ControlRoom";
+import { DriverUpdates } from "./views/DriverUpdates";
 import { Assumptions } from "./views/Assumptions";
 import { DACHSER_LOGO } from "./logo";
 const TABS = [
   { id:"planner", label:"Route planner", icon:Route },
   { id:"control", label:"Control room", icon:ShieldCheck }, { id:"shipments", label:"Shipments", icon:Truck },
   { id:"analytics", label:"Network intelligence", icon:BarChart3 },
-  { id:"savings", label:"Savings", icon:PiggyBank }, { id:"assumptions", label:"Assumptions", icon:BookOpen }
+  { id:"savings", label:"Savings", icon:PiggyBank }, { id:"driver",label:"Driver updates",icon:Truck }, { id:"assumptions", label:"Assumptions", icon:BookOpen }
 ];
 const PRIMARY_TABS = ["planner", "control", "shipments", "analytics", "savings"];
 export default function App() {
-  const [tab, setTab] = useState("planner");
-  const [visited, setVisited] = useState<Set<string>>(() => new Set(["planner"]));
+  const initialTab=TABS.some(t=>t.id===window.location.hash.slice(1).split("/")[0])?window.location.hash.slice(1).split("/")[0]:"planner";
+  const [tab, setTab] = useState(initialTab);
+  const [visited, setVisited] = useState<Set<string>>(() => new Set([initialTab]));
   const [net, setNet] = useState<NetworkDoc | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [ops, setOps] = useState<Operations | null>(null);
@@ -31,9 +33,12 @@ export default function App() {
   const selectTab = (id: string) => {
     if (moreMenu.current) moreMenu.current.open = false;
     setTab(id);
+    window.history.replaceState(null,"",`#${id}`);
     setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
     setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
   };
+
+  useEffect(()=>{const navigate=()=>{const id=window.location.hash.slice(1).split("/")[0];if(TABS.some(t=>t.id===id)){setTab(id);setVisited(prev=>prev.has(id)?prev:new Set(prev).add(id));window.dispatchEvent(new Event("resize"));}};window.addEventListener("hashchange",navigate);return()=>window.removeEventListener("hashchange",navigate)},[]);
 
   const refresh = () => setTick((t) => t + 1);
   useEffect(() => {
@@ -130,6 +135,8 @@ export default function App() {
         <div style={{ display: tab === "assumptions" ? "block" : "none" }}>
           {visited.has("assumptions") && <Assumptions />}
         </div>
+
+        <div style={{display:tab==="driver"?"block":"none"}}>{visited.has("driver")&&<DriverUpdates nodes={nodes}/>}</div>
 
         <footer className="workspace-footer">
           <span>Transit / Decision support, with people in control.</span>

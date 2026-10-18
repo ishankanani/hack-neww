@@ -161,6 +161,8 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     from .optimization import decorate
     from .capacity import evaluate as evaluate_capacity
     for option in options:option["capacity"]=evaluate_capacity(option,ctx,ldm)
+    from .reliability import arrival_evidence
+    for option in options:option["arrival_evidence"]=arrival_evidence(ctx.get("capacity_shipments",[]),ctx.get("original_origin",origin),destination,option["eta"],ctx.get("skip_origin_handling",False))
     from .dispatch import connection_warnings
     options=decorate(options,ctx,origin,destination,ldm,optimization)
     for option in options:
@@ -198,10 +200,15 @@ def review_options(ctx, ship):
     from .progress import dispatched,position_context,attach_completed,VEHICLE_NODE
     remaining=dispatched(ship)
     if remaining:ctx=position_context(ctx,ship)
+    ctx={**ctx,"original_origin":ship["origin"]}
     origin=VEHICLE_NODE if remaining else ship["origin"]
     path=ship["vehicle_position"]["remaining_path"] if remaining else ship["route"]
     args=(ctx,origin,ship["destination"],datetime.now(timezone.utc) if remaining else parse(ship["planned_departure"]),ship["weight_kg"],
           ship.get("required_delivery"),ship.get("value_eur",0),ship.get("optimization","fastest"),ship.get("truck"))
+    reported_delay=ship.get("reported_delay")
+    if reported_delay and parse(reported_delay["until"])>args[3]:
+        minutes=max(0,round((parse(reported_delay["until"])-args[3]).total_seconds()/60))
+        ctx["hub_delays"]={**ctx["hub_delays"],origin:{"minutes":minutes+ctx["hub_delays"].get(origin,{}).get("minutes",0),"reason":"Driver report: "+reported_delay["reason"]}}
     options=plan(*args,required_paths=[path])
     current=next((o for o in options if o["path"]==path and o.get("avoidance_status")!="CLEAR"),None)
     departure=parse(ship["planned_departure"])
@@ -214,10 +221,26 @@ def review_options(ctx, ship):
             if departure<release<=departure+timedelta(hours=24):
                 try: options.extend(plan(*args,only_paths=[ship["route"]],wait_until=release.isoformat()))
                 except ValueError: pass
-    for option in options: option["connections"]=connection_warnings(option,ship.get("accepted_plan"))
+    for option in options:
+        option["connections"]=connection_warnings(option,ship.get("accepted_plan"))
+        if current and option.get("dispatch_action")=="wait":
+            option["comparison"]={"baseline":"Current itinerary without waiting, under the same conditions","money_saved_eur":current["cost"]["transport_eur"]-option["cost"]["transport_eur"],"minutes_saved":current["total_minutes"]-option["total_minutes"],"fuel_saved_l":current["cost"]["fuel_l"]-option["cost"]["fuel_l"]}
+            option["baseline_snapshot"]={k:deepcopy(current[k]) for k in ("path","depart_at","eta","total_minutes","cost","revision")}
     if remaining:
         for option in options:option["baseline_snapshot"]=deepcopy(option.get("baseline_snapshot",{}))
-        for option in options:attach_completed(option,ship["vehicle_position"])
+        for option in options:
+            attach_completed(option,ship["vehicle_position"])
+            option["cost"]["cost_per_kg"]=cost_per_kg(option["cost"]["transport_eur"],ship["weight_kg"])
+    from .dispatch import approvable
+    objective=ship.get("optimization","fastest")
+    def rank(option):
+        value=option["cost"]["transport_eur"] if objective=="cost" else option["cost"]["transport_eur"]+option["total_minutes"]*50/60 if objective=="balanced" else option["total_minutes"]
+        return (not approvable(option),not option["risk"]["deadline_ok"],value,option["total_minutes"])
+    options.sort(key=rank)
+    eligible=[o for o in options if approvable(o)]
+    eligible=[o for o in eligible if o["risk"]["deadline_ok"]] or eligible
+    choices=[("Fastest",min(eligible,key=lambda o:o["total_minutes"])),("Lowest cost",min(eligible,key=lambda o:o["cost"]["transport_eur"])),("Balanced",min(eligible,key=lambda o:o["cost"]["transport_eur"]+o["total_minutes"]*50/60))] if eligible else []
+    for option in options:option["badges"]=[label for label,choice in choices if option is choice]
     return options
 
 
@@ -418,11 +441,11 @@ class Shipments:
         _save(self.data)
         return s
 
-    def replan(self, sid):
+    def replan(self, sid, from_now=False):
         s=self.data[sid]
         from .progress import dispatched
         if s["status"]=="DELIVERED":raise ValueError("Delivery is already confirmed")
-        if s.get("hold") and not dispatched(s) and parse(s["planned_departure"])<datetime.now(timezone.utc):
+        if (s.get("hold") or from_now) and not dispatched(s) and not s.get("demo_session") and parse(s["planned_departure"])<datetime.now(timezone.utc):
             # A resumed shipment cannot use its missed departure. The old
             # accepted plan remains intact for the manager's comparison.
             s["planned_departure"]=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()
@@ -438,9 +461,52 @@ class Shipments:
         s=self.data[sid]
         position=position_report(s,self.ctx["network"],**report)
         s["vehicle_position"]=position
+        s["simulation_used"]=s.get("simulation_used",False) or position["source"]=="SIMULATION"
         s.setdefault("movement_started_at",s.get("scheduled_departure") or datetime.now(timezone.utc).isoformat())
         s.setdefault("driver_updates",[]).append({"kind":"position","reported_at":position["reported_at"],"source":position["source"],"lat":position["lat"],"lon":position["lon"],"movement_state":position["movement_state"]})
         if not s.get("hold"):s["status"]="IN TRANSIT"
+        _save(self.data)
+        return s
+
+    def driver_event(self,sid,event):
+        s=self.data[sid]
+        if not s.get("approved_at"):raise ValueError("Approve the shipment before driver updates")
+        if s["status"]=="DELIVERED":raise ValueError("Delivery is already confirmed")
+        now=datetime.now(timezone.utc)
+        when=parse(event["at"]) if event.get("at") else now
+        if when>now:raise ValueError("Reported event time cannot be in the future")
+        from .savings import is_demo
+        kind=event["kind"];source="SIMULATION" if is_demo(s) else "DRIVER REPORTED"
+        reference=event.get("reference","").strip()
+        if kind=="departed":
+            if s.get("hold"):raise ValueError("Release the manager hold before departure")
+            if s.get("actual_departure"):raise ValueError("Departure already recorded")
+            s["actual_departure"]=when.isoformat();s["movement_started_at"]=when.isoformat();s["status"]="IN TRANSIT"
+        elif kind=="delay":
+            if not 1<=(event.get("minutes") or 0)<=1440 or len(reference)<3:raise ValueError("Enter a delay of 1–1440 minutes and a reason")
+            s["reported_delay"]={"minutes":event["minutes"],"reason":reference,"at":when.isoformat(),"reported_at":now.isoformat(),"until":(when+timedelta(minutes=event["minutes"])).isoformat(),"source":source}
+            s["alert"]="Driver delay: "+reference
+        elif kind=="safe_stop":
+            if not s.get("stop_request") or s["stop_request"]["status"]!="REQUESTED":raise ValueError("No pending safe-stop request")
+            from .progress import position_context
+            position_context(self.context_for(s),s)
+            if s["vehicle_position"]["movement_state"]!="STOPPED":raise ValueError("Record a fresh stopped position first")
+            if len(reference)<3:raise ValueError("Identify the safe stopping location")
+            request=s["stop_request"]
+            s["hold"]={"reason":request["reason"],"at":when.isoformat(),"previous_status":s["status"],"route_id":s["accepted_plan"].get("route_id"),"path":list(s["route"]),"plan":deepcopy(s["accepted_plan"]),"stop_reference":reference}
+            request.update({"status":"ACKNOWLEDGED","reference":reference,"acknowledged_at":when.isoformat()})
+            s["status"]="ON HOLD";s["alert"]="Stopped at reported location: "+reference
+        elif kind=="arrived":
+            if s.get("hold"):raise ValueError("Shipment is held; release it before confirming destination arrival")
+            if len(reference)<3:raise ValueError("Enter a delivery or recipient reference")
+            if s.get("actual_departure") and when<parse(s["actual_departure"]):raise ValueError("Arrival must follow reported departure")
+            if event.get("actual_cost_eur") is not None and not s.get("actual_departure"):raise ValueError("Record the actual departure before adding actual cost; arrival can be confirmed without a cost")
+            s["delivery_confirmation"]={"at":when.isoformat(),"source":source,"reference":reference}
+            s["status"]="DELIVERED";s["alert"]=None;s.pop("stop_request",None)
+            if event.get("actual_cost_eur") is not None:
+                self.record_outcome(sid,{"actual_departure":s["actual_departure"],"actual_arrival":when.isoformat(),"actual_cost_eur":event["actual_cost_eur"],"delivery_reference":reference})
+        else:raise ValueError("Unknown driver event")
+        s.setdefault("driver_updates",[]).append({"kind":kind,"reported_at":now.isoformat(),"at":when.isoformat(),"reference":reference,"source":source,"minutes":event.get("minutes")})
         _save(self.data)
         return s
 
@@ -448,6 +514,7 @@ class Shipments:
         if status not in {"PLANNED","SCHEDULED","IN TRANSIT","DELAYED","DELIVERED"}: raise ValueError("Invalid shipment status")
         s = self.data.get(sid)
         if s:
+            if s.get("status")=="DELIVERED" and status!="DELIVERED":raise ValueError("Delivery is confirmed. Create a new journey instead of reopening this record")
             if s.get("hold"): raise ValueError("Shipment is on hold. Recalculate and approve a clear route in the control room to release it.")
             if status in {"SCHEDULED","IN TRANSIT"} and not s.get("approved_at"): raise ValueError("A manager must approve a plan first")
             if status=="DELIVERED":
@@ -466,7 +533,7 @@ class Shipments:
         if arrival<departure: raise ValueError("Actual arrival must follow actual departure")
         if s.get("data_kind")!="demo" and arrival>datetime.now(timezone.utc): raise ValueError("Actual arrival cannot be in the future")
         error=round((arrival-datetime.fromisoformat(baseline["eta"])).total_seconds()/60)
-        actual={**outcome,"recorded_at":datetime.now(timezone.utc).isoformat(),"arrival_error_minutes":error,"cost_error_eur":round(outcome["actual_cost_eur"]-baseline["cost"]["transport_eur"],2),"on_time":arrival<=datetime.fromisoformat(s["required_delivery"]) if s.get("required_delivery") else None,"source":"DEMO OUTCOME" if s.get("data_kind")=="demo" else "USER-REPORTED ACTUAL","accepted_quote_id":baseline.get("quote_id")}
+        actual={**outcome,"recorded_at":datetime.now(timezone.utc).isoformat(),"arrival_error_minutes":error,"cost_error_eur":round(outcome["actual_cost_eur"]-baseline["cost"]["transport_eur"],2),"on_time":arrival<=datetime.fromisoformat(s["required_delivery"]) if s.get("required_delivery") else None,"source":"DEMO OUTCOME" if s.get("simulation_used") or s.get("data_kind")=="demo" or baseline.get("is_demo") else "USER-REPORTED ACTUAL","accepted_quote_id":baseline.get("quote_id")}
         s.setdefault("outcome_history",[]).append(deepcopy(actual))
         s["actual"]=actual
         s["status"]="DELIVERED"

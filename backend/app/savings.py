@@ -96,7 +96,8 @@ def _time_value(minutes):
 
 
 def is_demo(ship):
-    return bool(ship.get("data_kind")=="demo" or ship.get("demo_session") or (ship.get("accepted_plan") or {}).get("is_demo"))
+    return bool(ship.get("data_kind")=="demo" or ship.get("demo_session") or ship.get("simulation_used") or
+                (ship.get("vehicle_position") or {}).get("source")=="SIMULATION" or (ship.get("accepted_plan") or {}).get("is_demo"))
 
 
 def shipment_row(ship, names=None, demo=False):

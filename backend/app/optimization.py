@@ -10,7 +10,7 @@ def decorate(options, ctx, origin, destination, ldm, objective):
     cheapest=min(eligible,key=lambda o:o["cost"]["transport_eur"]) if eligible else None
     # Explainable prototype value of time, not a hidden model.
     balanced=min(eligible,key=lambda o:o["cost"]["transport_eur"]+o["total_minutes"]*50/60) if eligible else None
-    direct=next(o for o in options if len(o["path"])==2)
+    direct=next((o for o in options if len(o["path"])==2),options[0])
     for o in options:
         o["badges"]=[label for label,choice in [("Fastest",fastest),("Lowest cost",cheapest),("Balanced",balanced)] if choice is not None and o is choice]
         o["optimization"]=objective

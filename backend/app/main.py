@@ -241,6 +241,7 @@ def route(req: RouteReq):
     savings = savings_vs_baseline(options[0], options[1]) if len(options) > 1 and options[0].get("avoidance_status") in {"NO_ZONE", "CLEAR"} else None
     wx = []  # Manual/sample records are evaluated by the same weather alert engine.
     safe_available=approvable(options[0])
+    if not safe_available:savings=None
     _audit("route_calculated", f"{req.origin} → {req.destination}: " + (f"recommended ETA {options[0]['eta']}" if safe_available else "no route clear of simulated weather zones"))
     return {"options": options, "recommended": 0 if safe_available else None, "savings": savings,
             "weather": wx, "revision": S["operations"].data["revision"], "providers": S["providers"].all(), "evaluated_at": _now_iso()}
@@ -267,12 +268,15 @@ def list_shipments(status: Optional[str] = None, origin: Optional[str] = None,
         closures=[e for e in events if e["kind"]=="closure" and shipment_visits_hub_during(s,e,pending_only=True)]
         hub_minutes=sum(e["minutes"] for e in matching)
         traffic_minutes=sum(shipment_traffic_exposure_minutes(s,e,pending_only=True) for e in traffic)
+        driver_delay=s.get("reported_delay") or {}
+        driver_minutes=max(0,round((parse(driver_delay["until"])-datetime.now(timezone.utc)).total_seconds()/60)) if driver_delay and driver_delay.get("reported_at",driver_delay["at"])>(s.get("accepted_plan") or {}).get("evaluated_at","") else 0
         projected_eta=(parse(s["current_eta"])+timedelta(minutes=hub_minutes+traffic_minutes)).isoformat() if hub_minutes+traffic_minutes else None
         return {**{k:v for k,v in s.items() if k not in {"options","accepted_plan"}},
-                "dispatch":attention(s,S["ships"].context_for(s)["operations"],hub_minutes+traffic_minutes,closures),
+                "dispatch":attention(s,S["ships"].context_for(s)["operations"],hub_minutes+traffic_minutes+driver_minutes,closures),
                 "pending_hub_delay_minutes":hub_minutes,
                 "pending_hub_events":[e["id"] for e in matching],
                 "pending_traffic_minutes":traffic_minutes,
+                "pending_driver_minutes":driver_minutes,
                 "pending_traffic_events":[e["id"] for e in traffic],
                 "pending_closure_events":[e["id"] for e in closures],
                 "projected_eta":projected_eta}
@@ -540,10 +544,10 @@ def resolve_event(rid: str):
 
 @app.post("/api/shipments/{sid}/replan")
 @serialized
-def replan_shipment(sid: str):
+def replan_shipment(sid: str, from_now:bool=False):
     if not S["ships"].get(sid): raise HTTPException(404,"Unknown shipment")
     with LOCK:
-        s=S["ships"].replan(sid)
+        s=S["ships"].replan(sid,from_now=from_now)
         return {**s,"dispatch_actions":action_comparison(s)}
 
 
@@ -568,6 +572,23 @@ def update_position(sid:str,req:PositionReq):
     ship=S["ships"].update_position(sid,req.model_dump(mode="json"))
     _audit("vehicle_position",f"{sid}: {ship['vehicle_position']['source']}",ship["vehicle_position"]["source"])
     return {**ship,"dispatch_actions":[]}
+
+
+class DriverEventReq(BaseModel):
+    kind:Literal["departed","delay","safe_stop","arrived"]
+    at:Optional[AwareDatetime]=None
+    reference:str=Field(default="",max_length=500)
+    minutes:Optional[int]=Field(default=None,ge=1,le=1440)
+    actual_cost_eur:Optional[float]=Field(default=None,ge=0,allow_inf_nan=False)
+
+
+@app.post("/api/shipments/{sid}/driver-update")
+@serialized
+def driver_update(sid:str,req:DriverEventReq):
+    if not S["ships"].get(sid):raise HTTPException(404,"Unknown shipment")
+    ship=S["ships"].driver_event(sid,req.model_dump(mode="json"))
+    _audit("driver_update",f"{sid}: {req.kind}","USER-REPORTED DRIVER UPDATE")
+    return {**ship,"dispatch_actions":action_comparison(ship)}
 
 
 class StopReq(BaseModel):

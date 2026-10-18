@@ -6,6 +6,7 @@ async function req<T>(p: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 export const api = {
+  driverUpdate:(id:string,body:{kind:"departed"|"delay"|"safe_stop"|"arrived";at?:string;reference?:string;minutes?:number;actual_cost_eur?:number})=>req<Shipment>(`/shipments/${id}/driver-update`,{method:"POST",body:JSON.stringify(body)}),
   capacity:()=>req<{records:import("./types").CapacityRecord[]}>("/capacity"),
   saveCapacity:(body:Omit<import("./types").CapacityRecord,"id"|"source">)=>req<import("./types").CapacityRecord>("/capacity",{method:"POST",body:JSON.stringify(body)}),
   removeCapacity:(id:string)=>req(`/capacity/${id}`,{method:"DELETE"}),
@@ -28,7 +29,7 @@ export const api = {
   deleteWeather: (id: string) => req(`/weather-records/${id}`, {method:"DELETE"}),
   addEvent: (body: Omit<ScenarioEvent,"id">) => req<ScenarioEvent>("/events", {method:"POST",body:JSON.stringify(body)}),
   resolveEvent: (id: string) => req(`/events/${id}`, {method:"DELETE"}),
-  replan: (id: string) => req<Shipment>(`/shipments/${id}/replan`, {method:"POST"}),
+  replan: (id: string) => req<Shipment>(`/shipments/${id}/replan?from_now=true`, {method:"POST"}),
   decide: (body: {shipment_id:string; action:string; option:number; revision:number; quote_id:string; reason:string; acknowledge_deadline:boolean}) => req<Decision>("/decisions", {method:"POST", body:JSON.stringify(body)}),
   network: () => req<NetworkDoc>("/network"),
   hubs: () => req<{ hubs: Hub[] }>("/hubs"),
