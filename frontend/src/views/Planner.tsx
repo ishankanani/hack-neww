@@ -65,8 +65,8 @@ export function Planner({nodes,revision,onChange,onReview}:{nodes:NetNode[];revi
   try{const b=body();const key=JSON.stringify(b);const r=await api.route(b);
    completedRevision=r.revision??-1;completedKey=key;
    if(mounted.current&&id===requestId.current&&key===latestBody.current){
-    const safeIndex=r.options.findIndex(o=>o.avoidance_status==="CLEAR"||o.avoidance_status==="NO_ZONE");
-    const previousIndex=r.options.findIndex(o=>o.route_id===selectedRoute&&(o.avoidance_status==="CLEAR"||o.avoidance_status==="NO_ZONE"));
+    const safeIndex=r.options.findIndex(o=>(o.avoidance_status==="CLEAR"||o.avoidance_status==="NO_ZONE")&&o.capacity?.feasible!==false);
+    const previousIndex=r.options.findIndex(o=>o.route_id===selectedRoute&&((o.avoidance_status==="CLEAR"||o.avoidance_status==="NO_ZONE")&&o.capacity?.feasible!==false));
     const samePathIndex=r.options.findIndex(o=>o.route_id?.split(":")[0]===selectedRoute?.split(":")[0]);
     setResp(r);
     setSelected(automatic?(preferClear.current&&safeIndex>=0?safeIndex:previousIndex>=0?previousIndex:safeIndex>=0?safeIndex:samePathIndex>=0?samePathIndex:0):safeIndex>=0?safeIndex:0);

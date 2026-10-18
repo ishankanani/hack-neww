@@ -29,7 +29,7 @@ from .restrictions import drive_with_restrictions
 from .risk import assess
 from .shipments import Shipments, plan as plan_options, savings_vs_baseline, shipment_visits_hub_during, shipment_traffic_exposure_minutes
 from . import savings as savings_engine
-from .dispatch import attention, action_comparison
+from .dispatch import attention, action_comparison, approvable
 from .simulate import reroute as simulate_reroute
 from .map_tiles import router as map_tiles_router
 
@@ -50,7 +50,7 @@ def _audit(kind, detail, source="system"):
 def _ctx():
     return {"network": S["network"], "holidays": S["holidays"], "transfer": S["transfer"],
             "hub_delays": S["hub_delays"], "providers": S["providers"], "history": S["history"],
-            "operations": S["operations"]}
+            "operations": S["operations"],"capacity_shipments":list(S["ships"].data.values()) if "ships" in S else []}
 
 
 @asynccontextmanager
@@ -240,7 +240,7 @@ def route(req: RouteReq):
 
     savings = savings_vs_baseline(options[0], options[1]) if len(options) > 1 and options[0].get("avoidance_status") in {"NO_ZONE", "CLEAR"} else None
     wx = []  # Manual/sample records are evaluated by the same weather alert engine.
-    safe_available=options[0].get("avoidance_status") in {"NO_ZONE", "CLEAR"}
+    safe_available=approvable(options[0])
     _audit("route_calculated", f"{req.origin} → {req.destination}: " + (f"recommended ETA {options[0]['eta']}" if safe_available else "no route clear of simulated weather zones"))
     return {"options": options, "recommended": 0 if safe_available else None, "savings": savings,
             "weather": wx, "revision": S["operations"].data["revision"], "providers": S["providers"].all(), "evaluated_at": _now_iso()}
@@ -741,6 +741,45 @@ def save_service(req:ServiceReq):
 @serialized
 def delete_service(rid:str):
     S["operations"].remove("schedules",rid)
+    return {"ok":True}
+
+
+class CapacityReq(BaseModel):
+    kind:Literal["hub","service"]
+    node:Optional[str]=None
+    service_id:Optional[str]=None
+    start:AwareDatetime
+    end:AwareDatetime
+    available_ldm:float=Field(ge=0,le=10000,allow_inf_nan=False)
+    reason:str=Field(min_length=3,max_length=500)
+    @model_validator(mode="after")
+    def window(self):
+        if self.end<=self.start:raise ValueError("Capacity end must follow its start")
+        if self.kind=="hub" and not self.node:raise ValueError("Select a hub")
+        if self.kind=="service" and not self.service_id:raise ValueError("Select a departure service")
+        return self
+
+
+@app.get("/api/capacity")
+def capacity_records():
+    return {"records":S["operations"].snapshot()["capacity_records"]}
+
+
+@app.post("/api/capacity")
+@serialized
+def save_capacity(req:CapacityReq):
+    if req.kind=="hub":_node(req.node)
+    elif not any(s["id"]==req.service_id for s in S["operations"].data["schedules"]):raise ValueError("Unknown departure service")
+    row=S["operations"].put("capacity_records",{**req.model_dump(mode="json"),"source":"MANAGER ENTERED"})
+    _audit("capacity_limit",f"{req.kind}: {req.available_ldm} loading metres — {req.reason}","MANAGER INPUT")
+    return row
+
+
+@app.delete("/api/capacity/{rid}")
+@serialized
+def remove_capacity(rid:str):
+    if not any(r["id"]==rid for r in S["operations"].data["capacity_records"]):raise HTTPException(404,"Unknown capacity record")
+    S["operations"].remove("capacity_records",rid)
     return {"ok":True}
 
 class OutcomeReq(BaseModel):

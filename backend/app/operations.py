@@ -19,6 +19,7 @@ class Operations:
         self.data = json.loads(self.path.read_text()) if self.path.exists() else {"weather": [], "events": [], "decisions": [], "revision": 0}
         self.data.setdefault("schedules", [])
         self.data.setdefault("weather_zones", [])
+        self.data.setdefault("capacity_records", [])
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")

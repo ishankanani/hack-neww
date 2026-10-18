@@ -159,6 +159,8 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     with ThreadPoolExecutor(max_workers=min(4,len(paths))) as pool:
         options=[option for group in pool.map(evaluate_path,paths) for option in group]
     from .optimization import decorate
+    from .capacity import evaluate as evaluate_capacity
+    for option in options:option["capacity"]=evaluate_capacity(option,ctx,ldm)
     from .dispatch import connection_warnings
     options=decorate(options,ctx,origin,destination,ldm,optimization)
     for option in options:
@@ -279,10 +281,11 @@ class Shipments:
                          "data_kind":"demo", "customer_segment": seg, "container": f"C{uuid.uuid4().hex[:5].upper()}"})
 
     def context_for(self, ship):
+        ctx=self.ctx
         if ship.get("demo_session"):
             from .demo import context
-            return context(self.ctx,ship["demo_session"])
-        return self.ctx
+            ctx=context(self.ctx,ship["demo_session"])
+        return {**ctx,"capacity_shipments":list(self.data.values()),"exclude_shipment_id":ship.get("id")}
 
     def create(self, p):
         sid = "SHP-" + uuid.uuid4().hex[:6].upper()
@@ -328,6 +331,7 @@ class Shipments:
         if not 0 <= option_index < len(s["options"]): raise ValueError("Invalid route option")
         opt = s["options"][option_index]
         if moving and opt.get("position_id")!=s["vehicle_position"]["id"]:raise ValueError("Vehicle position changed. Recalculate remaining route before approval")
+        if not opt.get("capacity",{}).get("feasible",True):raise ValueError("Insufficient hub or service capacity. Choose another option or wait")
         if opt.get("avoidance_status") in {"IMPACTED", "NO_CLEAR_DETOUR"}:
             raise ValueError("Route crosses an active simulated weather zone. Hold the shipment or choose a clear route.")
         if quote_id is not None and quote_id!=opt.get("quote_id"): raise ValueError("This quote was replaced. Recalculate and review again.")
@@ -337,6 +341,8 @@ class Shipments:
         if opt.get("revision", -1) != ctx["operations"].data["revision"]: raise ValueError("Conditions changed. Recalculate the shipment before scheduling.")
         fresh=review_options(ctx,s)
         candidate=next((o for o in fresh if o.get("route_id")==opt.get("route_id")),None)
+        if candidate and not candidate.get("capacity",{}).get("feasible",True):raise ValueError("Capacity changed during approval. Recalculate and choose an available option")
+        if candidate and moving and not candidate.get("geometry"):raise ValueError("Remaining road geometry is unavailable; a reroute cannot be approved")
         if candidate and candidate.get("avoidance_status") in {"IMPACTED", "NO_CLEAR_DETOUR"}:
             raise ValueError("Weather conditions changed. Hold the shipment and recalculate a clear route.")
         if candidate is None or change_summary(opt,candidate)["material"]:
@@ -375,6 +381,8 @@ class Shipments:
                     "basis": "Previously approved path re-evaluated under the conditions in force at approval",
                 }
         s["options"] = fresh
+        from .capacity import reservations
+        s["capacity_reservations"]=reservations(approved)
         s.setdefault("approval_history",[]).append({"quote_id":previous_plan.get("quote_id"),"path":previous_plan.get("path"),"eta":previous_plan.get("eta"),"at":s.get("approved_at"),"reason":s.get("approval_reason")})
         s.pop("hold",None)
         if moving:s.pop("stop_request",None)

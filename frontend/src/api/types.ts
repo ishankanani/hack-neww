@@ -17,6 +17,7 @@ export interface Incident { id:string; geometry:{type:string;coordinates: number
 export interface MapConditions { weather:LiveWeather[]; incidents:{status:string;items:Incident[];fetched_at?:string}; traffic_configured:boolean; at:string; fetched_at:string; }
 export interface TruckProfile { height_m:number; width_m:number; length_m:number; gross_weight_kg:number; }
 export interface RouteOption {
+  capacity?:CapacityEvidence;
   remaining_only?:boolean;position_id?:string;vehicle_start?:{lat:number;lon:number;reported_at:string;source:string};completed_geometry?:number[][];completed_estimates?:OptCost;remaining_cost?:OptCost;
   dispatch_action?:"wait";dispatch_wait_until?:string;
   connections?:ConnectionWarning[];
@@ -104,6 +105,8 @@ export interface WeatherZone extends WeatherZoneInput {id:string; updated_at:str
 export interface Operations { revision: number; weather: WeatherRecord[]; weather_zones: WeatherZone[]; events: ScenarioEvent[]; decisions: Decision[]; }
 
 export interface Service { id:string; origin:string; destination:string; weekdays:number[]; departure_time:string; timezone:string; cutoff_minutes:number; source:string; }
+export interface CapacityRecord { id:string;kind:"hub"|"service";node:string|null;service_id:string|null;start:string;end:string;available_ldm:number;reason:string;source:string; }
+export interface CapacityEvidence { feasible:boolean;status:string;requested_ldm:number;source:string;checks:{kind:string;resource:string;from?:string;to?:string;available_ldm:number;reserved_ldm:number;requested_ldm:number;feasible:boolean;source:string;reason:string}[];unverified_resources:{kind:string;resource:string}[]; }
 export interface ConnectionWarning { service_id:string;from:string;to:string;arrival:string;ready_at:string;cutoff_at:string;cutoff_minutes:number;buffer_minutes:number;wait_minutes:number;departure:string;source:string;status:"MISSED"|"TIGHT"|"ON TRACK";previous_departure:string|null;connection_delay_minutes:number; }
 export interface VehiclePosition { id:string;lat:number;lon:number;reported_at:string;source:string;movement_state:"MOVING"|"STOPPED";base_quote_id:string;offset_km:number;completed_geometry:number[][];remaining_path:string[];completed_estimates:OptCost;note:string; }
 export interface DispatchAttention { priority:string;score:number;reasons:string[];connections:(ConnectionWarning&{projected_buffer_minutes:number})[];weather_zone_ids:string[];decision_by:string|null;note?:string; }
