@@ -41,7 +41,7 @@ export function Shipments({ nodes }: { nodes: NetNode[] }) {
             <div><dt>ETA / Required</dt><dd>ETA is the estimated arrival; Required is the delivery deadline entered for the shipment.</dd></div>
             <div><dt>Delay</dt><dd>How late the estimated arrival is against the required deadline. A dash means it is not currently late.</dd></div>
             <div><dt>Weight / Value</dt><dd>Shipment inputs used for capacity, estimated cost and risk calculations.</dd></div>
-            <div><dt>Cost</dt><dd>Estimated transport cost from lane tariffs or a prototype estimate; it is not a final invoice.</dd></div>
+            <div><dt>Cost</dt><dd>Estimated transport cost. Final charges may differ.</dd></div>
             <div><dt>Risk</dt><dd>Summarizes deadline slack, wait rules, lane history and shipment value.</dd></div>
             <div><dt>Alert</dt><dd>A specific warning, such as a missed delivery deadline.</dd></div>
           </dl>

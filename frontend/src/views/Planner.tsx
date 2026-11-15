@@ -3,7 +3,6 @@ import { ArrowUpRight, ArrowRightLeft, ShieldCheck, Loader2, Save } from "lucide
 import { api } from "../api/client";
 import type { NetNode, RouteResp, Operations, TruckProfile, WeatherZoneInput } from "../api/types";
 import { RouteCompare } from "../components/RouteCompare";
-import { ServiceSettings } from "../components/ServiceSettings";
 import { SavedJourneys } from "../components/SavedJourneys";
 import { localInput } from "../lib";
 type TruckInput = Record<keyof TruckProfile, string>;
@@ -103,14 +102,14 @@ export function Planner({nodes,revision,onChange,onReview}:{nodes:NetNode[];revi
  useEffect(()=>{const timer=setInterval(()=>refreshLatest.current(),120000);return()=>clearInterval(timer)},[]);
  return <>
  <section className="card planning-card">
-  <div className="card__h"><div><span className="eyebrow">START A JOURNEY</span><h2>Where are we heading?</h2></div><button className="linkbtn" onClick={weekendDemo}>Load Saturday demo ↗</button></div>
+  <div className="card__h"><div><span className="eyebrow">START A JOURNEY</span><h2>Plan a journey</h2></div><button className="linkbtn" onClick={weekendDemo}>Saturday example ↗</button></div>
   <form onSubmit={e=>{e.preventDefault();void go()}}>
    {inputInvalid&&<div className="planner-validation" role="alert"><b>Route search paused.</b> Correct the highlighted entries before calculating or selecting routes.</div>}
    <div className="plan-fields">
     <label>Origin<select aria-label="Origin" value={origin} onChange={e=>setOrigin(e.target.value)}>{nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></label>
     <button type="button" className="swap-button" aria-label="Swap origin and destination" onClick={()=>{setOrigin(dest);setDest(origin)}}><ArrowRightLeft size={16}/></button>
     <label>Destination<select aria-label="Destination" aria-invalid={!!inputErrors.destination} value={dest} onChange={e=>setDest(e.target.value)}>{nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select>{inputErrors.destination&&<small className="field-error">{inputErrors.destination}</small>}</label>
-    <label>Departure · device local time<input required aria-label="Departure" aria-invalid={!!inputErrors.depart} type="datetime-local" value={depart} onChange={e=>setDepart(e.target.value)}/>{inputErrors.depart&&<small className="field-error">{inputErrors.depart}</small>}</label>
+    <label>Departure · local time<input required aria-label="Departure" aria-invalid={!!inputErrors.depart} type="datetime-local" value={depart} onChange={e=>setDepart(e.target.value)}/>{inputErrors.depart&&<small className="field-error">{inputErrors.depart}</small>}</label>
     <button className="btn btn--mint" disabled={loading||inputInvalid||!nodes.length}>{loading?<Loader2 className="spin" size={17}/>:<ArrowUpRight size={17}/>} {loading?"Calculating…":"Find best routes"}</button>
    </div>
    <details className="shipment-settings" open>
@@ -118,21 +117,18 @@ export function Planner({nodes,revision,onChange,onReview}:{nodes:NetNode[];revi
     <div className="plan-secondary">
      <label>Weight · kg<input aria-label="Weight kg" aria-invalid={!!inputErrors.weight} required type="number" min="1" max="23800" step="1" value={weight} onChange={e=>setWeight(e.target.value)}/>{inputErrors.weight&&<small className="field-error">{inputErrors.weight}</small>}</label>
      <label>Shipment value · €<input aria-label="Shipment value" aria-invalid={!!inputErrors.value} type="number" min="0" max="100000000" step="0.01" value={value} onChange={e=>setValue(e.target.value)}/>{inputErrors.value&&<small className="field-error">{inputErrors.value}</small>}</label>
-     <label>Deliver by · device local time<input aria-label="Deliver by" aria-invalid={!!inputErrors.deadline} type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)}/>{inputErrors.deadline&&<small className="field-error">{inputErrors.deadline}</small>}</label>
+     <label>Deliver by · local time<input aria-label="Deliver by" aria-invalid={!!inputErrors.deadline} type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)}/>{inputErrors.deadline&&<small className="field-error">{inputErrors.deadline}</small>}</label>
      <label>Optimize for<select aria-label="Optimization goal" value={optimization} onChange={e=>setOptimization(e.target.value)}><option value="fastest">Fastest arrival</option><option value="cost">Lowest cost within deadline</option><option value="balanced">Balanced · €50 per transit hour</option></select></label>
     </div>
    </details>
    <details className="truck-settings" open>
-    <summary>Truck profile &amp; routing assumptions</summary>
+    <summary>Truck details</summary>
     <div className="truck-fields">{truckRules.map(([key,label,min,max])=><label key={key}>{label}{key==="gross_weight_kg"?" (kg)":" (m)"}<input aria-label={label} aria-invalid={!!inputErrors[key]} required type="number" min={min} max={max} step="any" value={truck[key]} onChange={e=>setTruck({...truck,[key]:e.target.value})}/>{inputErrors[key]&&<small className="field-error">{inputErrors[key]}</small>}</label>)}</div>
    </details>
   </form>
  </section>
  {err&&<div role="alert" className="notice notice--warn">{err}</div>}{message&&<div role="status" className="notice notice--info">{message}<button className="linkbtn" onClick={onReview}>Open control room ↗</button></div>}
- {resp&&!inputInvalid?<section className={`card results-card ${loading?"is-updating":""}`}>{dirty&&<div className="notice notice--warn">Inputs changed. Calculate again to update these results.</div>}<RouteCompare nodes={nodes} options={resp.options} savings={resp.savings} selected={selected} onSelect={setSelected} onRefresh={()=>{if(!loading)void go(true)}} deadline={deadline?new Date(deadline).toISOString():null} truck={truckProfile} onScenario={()=>{void scenarioChanged()}} weatherZones={ops?.weather_zones} onAddWeatherZone={addZone} onUpdateWeatherZone={updateZone} onDeleteWeatherZone={deleteZone} onCancelWeatherZones={cancelWeatherZones}/><div className="results-actions"><span><ShieldCheck size={16}/> ETAs refresh every 2 minutes while this page is active. Human approval before dispatch.</span><button className="btn btn--ghost" onClick={onReview}>Open control room</button><button className="btn btn--ghost" disabled={saving||loading||!!dirty||resp.revision!==revision||resp.recommended===null} onClick={()=>save(true)}>Save recommended</button><button className="btn" disabled={saving||loading||!!dirty||resp.revision!==revision} onClick={()=>save(false)}><Save size={15}/>{saving?"Saving…":"Save plan for review"}</button></div></section>:null}
- <details className="planner-tools card" open><summary>Advanced tools <span>Schedules</span></summary>
- <ServiceSettings nodes={nodes} origin={origin} destination={dest} onChange={onChange}/>
- </details>
+ {resp&&!inputInvalid?<section className={`card results-card ${loading?"is-updating":""}`}>{dirty&&<div className="notice notice--warn">Inputs changed. Calculate again to update these results.</div>}<RouteCompare nodes={nodes} options={resp.options} savings={resp.savings} selected={selected} onSelect={setSelected} onRefresh={()=>{if(!loading)void go(true)}} deadline={deadline?new Date(deadline).toISOString():null} truck={truckProfile} onScenario={()=>{void scenarioChanged()}} weatherZones={ops?.weather_zones} onAddWeatherZone={addZone} onUpdateWeatherZone={updateZone} onDeleteWeatherZone={deleteZone} onCancelWeatherZones={cancelWeatherZones}/><div className="results-actions"><span><ShieldCheck size={16}/> Updated estimates · Manager approval before dispatch.</span><button className="btn btn--ghost" onClick={onReview}>Open control room</button><button className="btn btn--ghost" disabled={saving||loading||!!dirty||resp.revision!==revision||resp.recommended===null} onClick={()=>save(true)}>Save recommended</button><button className="btn" disabled={saving||loading||!!dirty||resp.revision!==revision} onClick={()=>save(false)}><Save size={15}/>{saving?"Saving…":"Save plan for review"}</button></div></section>:null}
  <SavedJourneys nodes={nodes} refreshKey={saveTick} onReview={onReview}/>
  </>
 }

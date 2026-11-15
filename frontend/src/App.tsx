@@ -65,11 +65,9 @@ export default function App() {
           <img src={DACHSER_LOGO} alt="DACHSER" className="brand-logo" />
           <small>LIVE TRANSIT PLANNER</small>
         </a>
-        <span className="workspace-label">CHALLENGE 03</span>
         <div className="top__spacer" />
-        <span className="prototype-tag">HACKATHON PROTOTYPE</span>
         <button className="icon-button" aria-label="Refresh workspace" onClick={refresh}><RefreshCw size={17} /></button>
-        <span className="avatar" title="Demo manager">MK</span>
+        <span className="avatar" title="Traffic manager">MK</span>
       </header>
       <nav className="workspace-nav" aria-label="Workspace navigation">
         {TABS.filter((t) => PRIMARY_TABS.includes(t.id)).map((t) => (
@@ -96,10 +94,9 @@ export default function App() {
       </nav>
       <main className="wrap">
         <div className="page-meta">
-          <span>WORKSPACE <span>/</span> {TABS.find((t) => t.id === tab)?.label.toUpperCase()}</span>
-          <span><Activity size={12} /> {nodes.length} facilities · {ops?.events.length ?? 0} scenario events</span>
+          <span>{TABS.find((t) => t.id === tab)?.label}</span>
+          <span><Activity size={12} /> {nodes.length} facilities</span>
         </div>
-        {net?.deployment?.message&&<div className="notice notice--warn" role="status">{net.deployment.message}</div>}
         {err && <div role="alert" className="notice notice--warn">Connection issue: {err}<button className="linkbtn" onClick={refresh}>Retry</button></div>}
         {alerts.length > 0 && tab !== "control" && (
           <button className="alert-strip" onClick={() => selectTab("control")}>
@@ -124,7 +121,7 @@ export default function App() {
           {visited.has("analytics") && (
             <>
               <div className="page-heading">
-                <div><span className="eyebrow">NETWORK INTELLIGENCE</span><h1>Learn from every lane.</h1><p>Historical operations and hub performance from the supplied data.</p></div>
+                <div><h1>Network intelligence</h1><p>Journey history and facility performance.</p></div>
               </div>
               <Analytics onData={refresh} />
             </>
@@ -140,14 +137,14 @@ export default function App() {
         <div style={{display:tab==="driver"?"block":"none"}}>{visited.has("driver")&&<DriverUpdates nodes={nodes}/>}</div>
 
         <footer className="workspace-footer">
-          <span>Transit / Decision support, with people in control.</span>
-          <div className="provider-strip">
+          <span>DACHSER · Transit planner</span>
+          <details className="connection-status"><summary>Connection status</summary><div className="provider-strip">
             {providers.map((p) => (
               <span key={p.key} className={statusClass(p.status)} title={`${p.name} · ${p.status}${p.error ? " · " + p.error : ""}`}>
                 <span className="dot" />{p.key}: {p.status.replace(/_/g, " ")}
               </span>
             ))}
-          </div>
+          </div></details>
         </footer>
       </main>
     </div>
