@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { CloudSun, RefreshCw, Expand, LocateFixed, Car, TriangleAlert, Key, X, ExternalLink } from "lucide-react";
+import { CloudSun, RefreshCw, Expand, LocateFixed, Car, TriangleAlert, Key, X, ExternalLink, ScanEye } from "lucide-react";
 import { api, BASE } from "../api/client";
 import type { NetNode, RouteOption, MapConditions, LiveWeather, AppSettings, Incident, WeatherZone, WeatherZoneInput } from "../api/types";
 import { dt, hm } from "../lib";
 import type { SimView } from "./JourneySimulator";
 import { MapWeatherSimulation } from "./MapWeatherSimulation";
+import { StreetViewInspector } from "./StreetViewInspector";
 
 function buildHubPopupHtml(
   n: NetNode,
@@ -309,6 +310,7 @@ export function LiveMap({
   const [traffic, setTraffic] = useState(true);
   const [incidents, setIncidents] = useState(true);
   const [hubs, setHubs] = useState(true);
+  const [streetViewOpen, setStreetViewOpen] = useState(false);
   const [offset, setOffset] = useState(-1);
 
   const [showKeyModal, setShowKeyModal] = useState(false);
@@ -860,6 +862,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
               </button>
             );
           })}
+          <button aria-label="Inspect route in Google Street View" aria-expanded={streetViewOpen} aria-pressed={streetViewOpen} disabled={coords.length < 2} onClick={() => setStreetViewOpen(v => !v)}><ScanEye size={13} />Street View</button>
           <details className="map-settings">
             <summary>Map settings</summary>
             <div className="map-settings-menu">
@@ -937,6 +940,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
           <small>{demo ? "Demo replay · live overlays disabled" : offset > 0 ? "Future weather · traffic hidden" : `Traffic ${data?.traffic_configured ? "live" : "simulated"} · weather forecast`}</small>
         </span>
       </div>
+      {streetViewOpen && <StreetViewInspector key={coordKey} coords={coords} mapRef={map} ready={ready} styleVersion={styleVersion} simulation={sim} routeLabel={path.map(id => byId.get(id)?.name ?? (id === "@vehicle" ? "Vehicle position" : id)).join(" → ")} onClose={() => setStreetViewOpen(false)} />}
       <MapWeatherSimulation mapRef={map} mapContainerRef={ref} ready={ready} styleVersion={styleVersion}
         fallback={fallback} demo={demo} routeCoords={planned} weatherZones={weatherZones}
         plannedStart={plannedStart} plannedEnd={plannedEnd} avoidanceStatus={avoidanceStatus}

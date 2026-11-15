@@ -9,10 +9,11 @@ Reconnect the Vercel app in Codex if it reports reauthentication. Alternatively 
 ## Environment and state
 
 - Optional `TOMTOM_API_KEY`: add directly to the Vercel backend's environment. It must never be a `VITE_` variable. The cloud API disables public key editing and hides key fragments.
+- Optional `VITE_GOOGLE_MAPS_EMBED_API_KEY`: a browser-restricted Maps Embed API key, read during the frontend build. Street View links work without a key; see [Street View setup](STREET_VIEW.md) before enabling embedded panoramas.
 - The frontend calls relative `/api` URLs, so no localhost address is shipped to the browser.
 - `.vercelignore` excludes credentials, local shipment/scenario stores, caches, dependencies and generated presentations.
 - The cloud demo starts without auto-seeded shipments, avoiding routing-provider calls during cold startup. CSV analytics still load normally.
-- Vercel execution files are read-only; runtime JSON and tile caches use temporary storage. The UI labels this mode. Records can disappear on restart and differ between instances. This is a demonstration configuration, not durable shared operations.
+- Vercel execution files are read-only; runtime JSON and tile caches use temporary storage. `/api/network` reports the storage mode. Records can disappear on restart and differ between instances. This is a demonstration configuration, not durable shared operations.
 - For a company pilot, move shipments, operational scenarios, approvals and reservations to transactional shared storage and reload state consistently per request. A connected database and authenticated users are required before relying on these records operationally. Deploying the current JSON store to `/tmp` does not supply that persistence.
 
 ## Verification
