@@ -19,4 +19,15 @@ Reconnect the Vercel app in Codex if it reports reauthentication. Alternatively 
 
 Local frontend and API were started on ports 5176 / 8004. Deployment is complete only after Vercel returns a ready deployment and its API is checked. Account reauthentication and remote build verification cannot be replaced by a local build.
 
-Preparation checks passed: production frontend build; cloud-mode FastAPI startup with 32 facilities, no imported local shipments, and blocked public API-key editing. The authenticated Vercel connector currently requires reauthentication. An anonymous temporary deployment was also attempted from an isolated source copy; its Windows build failed with `spawn cmd.exe ENOENT`. No successful hosted URL has been verified.
+Preparation checks passed: production frontend build; cloud-mode FastAPI startup with 32 facilities, no imported local shipments, and blocked public API-key editing.
+
+## Verified production deployment — 15 November 2026
+
+- URL: https://dachser-transit-planner.vercel.app
+- Vercel project: `dachser-transit-planner` (`prj_yVvUKcWUMoDuXjfPAzhkxth228qz`).
+- Deployment: `dpl_Ce9NF27bvXKUoxKBUhyErVw6eNkb`, built from commit `e0b737945f12b8484dccc465549d62dc0eb34b3b` after reconnecting the Vercel account.
+- Vercel reported `READY`. Unauthenticated HTTPS requests to `/`, `/api/health`, `/api/network` and a basemap tile returned 200. The network response contained 32 facilities and explicitly identified temporary storage.
+- A POST to `/api/route` returned four route options, a recommended option and road geometry. This verifies a route calculation, not every operational workflow or durable shared state.
+- The anonymous Windows deployment fallback had failed; the successful deployment used the authenticated Vercel connector and GitHub source with remote Linux builds.
+
+Saved plans and scenarios still use ephemeral hosted-demo storage. The deployment does not add a shared database, live telematics or carrier capacity integration.
