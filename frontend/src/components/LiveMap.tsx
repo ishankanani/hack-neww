@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { CloudSun, RefreshCw, Expand, LocateFixed, Car, TriangleAlert, Key, X, ExternalLink, ScanEye } from "lucide-react";
+import { CloudSun, RefreshCw, Expand, LocateFixed, Car, TriangleAlert, Key, X, ExternalLink } from "lucide-react";
 import { api, BASE } from "../api/client";
 import type { NetNode, RouteOption, MapConditions, LiveWeather, AppSettings, Incident, WeatherZone, WeatherZoneInput } from "../api/types";
 import { dt, hm } from "../lib";
 import type { SimView } from "./JourneySimulator";
 import { MapWeatherSimulation } from "./MapWeatherSimulation";
-import { StreetViewInspector } from "./StreetViewInspector";
+import { GoogleLiveMap } from "./GoogleLiveMap";
+import { GOOGLE_MAPS_KEY } from "./googleMapsApi";
+import { routePointForIncident } from "./mapRouteGeometry";
+import { TRUCK_GLYPH } from "./truckGlyph";
 
 function buildHubPopupHtml(
   n: NetNode,
@@ -191,39 +194,18 @@ function popup(text: string) {
   return new maplibregl.Popup({ offset: 15, maxWidth: "280px" }).setText(text);
 }
 
-function routePointForIncident(incident: Incident, route: number[][]): [number, number] | null {
-  if (route.length < 2) return null;
-  const incidentPoints: [number, number][] = [];
-  const collect = (value: unknown) => {
-    if (!Array.isArray(value)) return;
-    if (value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
-      incidentPoints.push([value[0], value[1]]);
-      return;
-    }
-    value.forEach(collect);
-  };
-  collect(incident.geometry.coordinates);
-  let bestDistance = Infinity;
-  let bestPoint: [number, number] | null = null;
-  for (const [lon, lat] of incidentPoints) {
-    const scaleX = 111.32 * Math.cos((lat * Math.PI) / 180);
-    for (let i = 1; i < route.length; i++) {
-      const a = route[i - 1], b = route[i];
-      const dx = (b[0] - a[0]) * scaleX, dy = (b[1] - a[1]) * 111.32;
-      const px = (lon - a[0]) * scaleX, py = (lat - a[1]) * 111.32;
-      const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)));
-      const x = a[0] + (b[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * t;
-      const distance = Math.hypot((lon - x) * scaleX, (lat - y) * 111.32);
-      if (distance < bestDistance) { bestDistance = distance; bestPoint = [x, y]; }
-    }
-  }
-  // TomTom queries a corridor around the road; only display incidents within 1 km of this route.
-  return bestDistance <= 1 ? bestPoint : null;
-}
 
 const EMPTY_ZONES: WeatherZone[] = [];
 
-export function LiveMap({
+export type LiveMapProps = Parameters<typeof OpenStreetMap>[0];
+
+export function LiveMap(props: LiveMapProps) {
+  const [backup, setBackup] = useState(false);
+  if (GOOGLE_MAPS_KEY && !backup) return <GoogleLiveMap {...props} onFallback={() => setBackup(true)} />;
+  return <>{backup && <div className="map-provider-switch">Backup map active. <button className="linkbtn" onClick={() => setBackup(false)}>Return to Google Maps</button></div>}<OpenStreetMap {...props} /></>;
+}
+
+function OpenStreetMap({
   demo = false,
   nodes,
   path,
@@ -310,7 +292,6 @@ export function LiveMap({
   const [traffic, setTraffic] = useState(true);
   const [incidents, setIncidents] = useState(true);
   const [hubs, setHubs] = useState(true);
-  const [streetViewOpen, setStreetViewOpen] = useState(false);
   const [offset, setOffset] = useState(-1);
 
   const [showKeyModal, setShowKeyModal] = useState(false);
@@ -783,7 +764,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
       el.setAttribute("role", "img");
       el.setAttribute("aria-label", "Simulated freight truck");
       el.setAttribute("title", "Simulated freight vehicle");
-      el.innerHTML = '<svg viewBox="0 0 28 48" width="24" height="42" aria-hidden="true"><g fill="#173e37"><rect x="2" y="8" width="4" height="7" rx="1"/><rect x="22" y="8" width="4" height="7" rx="1"/><rect x="2" y="34" width="4" height="8" rx="1"/><rect x="22" y="34" width="4" height="8" rx="1"/></g><rect x="5" y="3" width="18" height="13" rx="4" fill="#fbd33b" stroke="#173e37" stroke-width="1.6"/><path d="M8 7h12v5H8z" fill="#23534d"/><rect x="5" y="18" width="18" height="26" rx="2.5" fill="#fff" stroke="#173e37" stroke-width="1.8"/><path d="M9 23v16m5-16v16m5-16v16" stroke="#ccdcd4" stroke-width="1.4"/><rect x="7" y="42" width="4" height="2" rx=".5" fill="#d3573e"/><rect x="17" y="42" width="4" height="2" rx=".5" fill="#d3573e"/></svg>';
+      el.innerHTML = TRUCK_GLYPH;
       truckMarker.current = new maplibregl.Marker({ element: el, rotationAlignment: "map" })
         .setLngLat(first.position)
         .setRotation(first.bearing)
@@ -862,7 +843,6 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
               </button>
             );
           })}
-          <button aria-label="Inspect route in Google Street View" aria-expanded={streetViewOpen} aria-pressed={streetViewOpen} disabled={coords.length < 2} onClick={() => setStreetViewOpen(v => !v)}><ScanEye size={13} />Street View</button>
           <details className="map-settings">
             <summary>Map settings</summary>
             <div className="map-settings-menu">
@@ -940,7 +920,6 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
           <small>{demo ? "Demo replay · live overlays disabled" : offset > 0 ? "Future weather · traffic hidden" : `Traffic ${data?.traffic_configured ? "live" : "simulated"} · weather forecast`}</small>
         </span>
       </div>
-      {streetViewOpen && <StreetViewInspector key={coordKey} coords={coords} mapRef={map} ready={ready} styleVersion={styleVersion} simulation={sim} routeLabel={path.map(id => byId.get(id)?.name ?? (id === "@vehicle" ? "Vehicle position" : id)).join(" → ")} onClose={() => setStreetViewOpen(false)} />}
       <MapWeatherSimulation mapRef={map} mapContainerRef={ref} ready={ready} styleVersion={styleVersion}
         fallback={fallback} demo={demo} routeCoords={planned} weatherZones={weatherZones}
         plannedStart={plannedStart} plannedEnd={plannedEnd} avoidanceStatus={avoidanceStatus}

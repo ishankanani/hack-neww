@@ -9,7 +9,7 @@ Reconnect the Vercel app in Codex if it reports reauthentication. Alternatively 
 ## Environment and state
 
 - Optional `TOMTOM_API_KEY`: add directly to the Vercel backend's environment. It must never be a `VITE_` variable. The cloud API disables public key editing and hides key fragments.
-- Optional `VITE_GOOGLE_MAPS_EMBED_API_KEY`: a browser-restricted Maps Embed API key, read during the frontend build. Street View links work without a key; see [Street View setup](STREET_VIEW.md) before enabling embedded panoramas.
+- `VITE_GOOGLE_MAPS_API_KEY`: a browser-restricted Maps JavaScript API key, read during the frontend build. A Maps Demo Key can be used for the no-billing prototype. `VITE_GOOGLE_MAP_ID=DEMO_MAP_ID` supplies its map ID. See [Google Maps setup](GOOGLE_MAPS.md). Without a key, the existing backup basemap remains available.
 - The frontend calls relative `/api` URLs, so no localhost address is shipped to the browser.
 - `.vercelignore` excludes credentials, local shipment/scenario stores, caches, dependencies and generated presentations.
 - The cloud demo starts without auto-seeded shipments, avoiding routing-provider calls during cold startup. CSV analytics still load normally.

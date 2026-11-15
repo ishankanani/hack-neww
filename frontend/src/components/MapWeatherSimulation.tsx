@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, MouseEvent, ReactNode, RefObject } from "react";
 import maplibregl from "maplibre-gl";
 import type { RouteOption, WeatherZone, WeatherZoneInput } from "../api/types";
+import type { WeatherMapSurface } from "./WeatherMapSurface";
 import "../weather-simulation.css";
 
 type Kind = WeatherZoneInput["kind"];
@@ -15,6 +16,7 @@ type Props = {
   children: ReactNode;
   mapRef: RefObject<maplibregl.Map | null>;
   mapContainerRef: RefObject<HTMLDivElement | null>;
+  surface?: WeatherMapSurface | null;
   ready: boolean;
   styleVersion: number;
   fallback: boolean;
@@ -40,7 +42,7 @@ function circle(zone: WeatherZone): number[][] {
 }
 
 export function MapWeatherSimulation({
-  children, mapRef, mapContainerRef, ready, styleVersion, fallback, demo,
+  children, mapRef, mapContainerRef, surface, ready, styleVersion, fallback, demo,
   routeCoords, weatherZones, plannedStart, plannedEnd, avoidanceStatus,
   onAddWeatherZone, onUpdateWeatherZone, onDeleteWeatherZone,
   onCancelWeatherZones,
@@ -61,8 +63,8 @@ export function MapWeatherSimulation({
   async function save(work: () => Promise<void>) {
     setBusy(true);
     setError("");
-    try { await work(); }
-    catch (e) { setError(String(e)); }
+    try { await work(); return true; }
+    catch (e) { setError(String(e)); return false; }
     finally { setBusy(false); }
   }
 
@@ -85,7 +87,9 @@ export function MapWeatherSimulation({
   function pointFromEvent(e: { clientX: number; clientY: number }) {
     const map = mapRef.current;
     const box = mapContainerRef.current?.getBoundingClientRect();
-    if (!map || !box || !ready) return null;
+    if (!box || !ready) return null;
+    if (surface) return surface.unproject([e.clientX - box.left, e.clientY - box.top]);
+    if (!map) return null;
     return map.unproject([e.clientX - box.left, e.clientY - box.top]);
   }
 
@@ -102,6 +106,14 @@ export function MapWeatherSimulation({
     const point = pointFromEvent(e);
     if (point) place(kind, point.lng, point.lat);
   }
+
+  useEffect(() => {
+    if (!surface || !ready || fallback) return;
+    return surface.drawWeather(active, zone => { setSelected(zone.id); setRadius(zone.radius_km); },
+      onUpdateWeatherZone ? (zone, point) => save(() => onUpdateWeatherZone(zone.id, {
+        kind: zone.kind, lon: point.lng, lat: point.lat, radius_km: zone.radius_km, start: zone.start, end: zone.end,
+      })) : undefined);
+  }, [surface, active, ready, fallback, onUpdateWeatherZone]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -157,16 +169,17 @@ export function MapWeatherSimulation({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || fallback) { setPixels({}); return; }
+    if ((!map && !surface) || !ready || fallback || surface?.rendersWeatherEffects) { setPixels({}); return; }
     let frame = 0;
     const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const next: Record<string, { left: number; top: number; size: number }> = {};
         for (const zone of active) {
-          const center = map.project([zone.lon, zone.lat]);
+          const center = surface ? surface.project([zone.lon, zone.lat]) : map!.project([zone.lon, zone.lat]);
           const lonKm = 111.32 * Math.max(0.1, Math.cos(zone.lat * Math.PI / 180));
-          const edge = map.project([zone.lon + zone.radius_km / lonKm, zone.lat]);
+          const edge = surface ? surface.project([zone.lon + zone.radius_km / lonKm, zone.lat]) : map!.project([zone.lon + zone.radius_km / lonKm, zone.lat]);
+          if (!center || !edge) continue;
           const r = Math.max(1, Math.abs(edge.x - center.x));
           next[zone.id] = { left: center.x - r, top: center.y - r, size: 2 * r };
         }
@@ -174,10 +187,11 @@ export function MapWeatherSimulation({
       });
     };
     update();
-    map.on("move", update);
-    map.on("resize", update);
-    return () => { cancelAnimationFrame(frame); map.off("move", update); map.off("resize", update); };
-  }, [active, ready, fallback, mapRef]);
+    if (surface) { const unsubscribe = surface.subscribe(update); return () => { cancelAnimationFrame(frame); unsubscribe(); }; }
+    map!.on("move", update);
+    map!.on("resize", update);
+    return () => { cancelAnimationFrame(frame); map!.off("move", update); map!.off("resize", update); };
+  }, [active, ready, fallback, mapRef, surface]);
 
   const enabled = !demo && !!onAddWeatherZone;
 
@@ -202,7 +216,7 @@ export function MapWeatherSimulation({
     </details>}
     <div className="map-viewport" onDragOver={e => { if (e.dataTransfer.types.includes("application/x-weather-kind")) e.preventDefault(); }} onDrop={drop}>
       {children}
-      {enabled && !fallback && active.map(zone => {
+      {!fallback && !surface?.rendersWeatherEffects && active.map(zone => {
         const p = pixels[zone.id];
         return p ? <div key={zone.id} className={`sim-weather-effect sim-weather-effect--${zone.kind}`}
           style={{ left: p.left, top: p.top, width: p.size, height: p.size, "--zone-diameter": `${p.size}px` } as CSSProperties} aria-hidden="true">
@@ -223,7 +237,7 @@ export function MapWeatherSimulation({
       <span>{avoidanceStatus === "CLEAR" ? "Road geometry checked against every active zone with 2 km clearance." :
         "Weather zones are a manual what-if simulation; live forecast markers remain separate."}</span></div>}
     {enabled && active.length > 0 && <div className="sim-zone-list">{active.map(zone => <div key={zone.id} className={selected === zone.id ? "is-selected" : ""}>
-      <button type="button" onClick={() => { setSelected(zone.id); setRadius(zone.radius_km); mapRef.current?.flyTo({ center: [zone.lon, zone.lat], zoom: Math.max(mapRef.current.getZoom(), 7) }); }}>
+      <button type="button" onClick={() => { setSelected(zone.id); setRadius(zone.radius_km); if (surface) surface.focus([zone.lon, zone.lat]); else mapRef.current?.flyTo({ center: [zone.lon, zone.lat], zoom: Math.max(mapRef.current.getZoom(), 7) }); }}>
         {HAZARDS.find(h => h.kind === zone.kind)?.icon} {zone.kind} · {zone.radius_km} km</button>
       <span>{active.some(a => a.id === zone.id) ? "This trip" : "Other time"}</span>
       {selected === zone.id && onUpdateWeatherZone && <button type="button" disabled={busy || radius === zone.radius_km}

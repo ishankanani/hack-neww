@@ -1,0 +1,14 @@
+.google-map-canvas { width: 100%; height: 420px; min-height: 340px; background: #edf2ed; }
+.google-map-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: #5d7867; background: #f1f6f0b3; font-size: 13px; }
+.google-provider-label { padding-right: 4px; color: #3d6e51; font-size: 12px; font-weight: 700; }
+.google-live-map .map-settings-menu label { display: flex; gap: 8px; flex-direction: column; font-size: 12px; color: #607968; }
+.google-live-map .map-settings-menu select { padding: 9px; width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+.google-map-information { max-width: 270px; padding: 4px 5px 8px; color: #305d43; font: 12px/1.65 var(--font); }
+.google-map-information strong { display: block; font-size: 14px; margin-bottom: 8px; }
+.google-map-information p { margin: 5px 0; color: #708372; white-space: pre-line; }
+.map-provider-switch { padding: 9px 14px; font-size: 12px; color: #718376; background: #f4f8f4; border-bottom: 1px solid var(--line); }
+.google-live-map .facility-marker, .google-live-map .weather-marker, .google-live-map .incident-marker { cursor: pointer; }
+.google-live-map .truck-marker { transform-origin: center; }
+.google-weather-effects { position: absolute; left: 0; top: 0; pointer-events: none; }
+.google-live-map .sim-place-layer { bottom: 32px; }
+@media (max-width: 650px) { .google-map-canvas { height: 390px; } .google-provider-label { font-size: 11px; } }
