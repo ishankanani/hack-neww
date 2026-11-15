@@ -9,8 +9,8 @@ import {
 } from "./simulation";
 import type { LngLat, SimPlan, SimSnapshot, Diversion } from "./simulation";
 
-/** Simulated minutes per real second at 1x. A 10-hour journey replays in ~13s. */
-const MINUTES_PER_SECOND = 45;
+/** At 1x a ten-hour journey takes one minute, including its stationary phases. */
+const MINUTES_PER_SECOND = 10;
 const SPEEDS = [1, 2, 4] as const;
 /** Fraction of the journey after which an automatic blockage appears. */
 const AUTO_TRIGGER_AT = 0.3;
@@ -36,6 +36,7 @@ export interface SimView {
   running: boolean;
   engaged: boolean;
   followTruck: boolean;
+  sampleTruck: () => { position: LngLat; bearing: number; moving: boolean } | null;
 }
 
 export interface Simulation {
@@ -89,7 +90,7 @@ interface Args {
 
 export function useJourneySimulation({ option, options, nodes, deadline, truck, weatherZones = [], onCommitted }: Args): Simulation {
   const [running, setRunning] = useState(false);
-  const [speed, setSpeed] = useState(2);
+  const [speed, setSpeed] = useState(1);
   const [t, setT] = useState(0);
   const [override, setOverride] = useState<SimPlan | null>(null);
   const [offset, setOffset] = useState(0); // minutes already driven before a diversion
@@ -143,7 +144,8 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
       last = now;
       since += delta;
       tRef.current = Math.min(plan.totalMinutes, tRef.current + delta * MINUTES_PER_SECOND * speed);
-      if (since >= 0.045) { since = 0; setT(tRef.current); }
+      // Readouts need 10 updates/second; the map samples this clock every frame.
+      if (since >= 0.1) { since = 0; setT(tRef.current); }
       if (tRef.current >= plan.totalMinutes) { setT(plan.totalMinutes); setRunning(false); return; }
       frame = requestAnimationFrame(tick);
     };
@@ -152,11 +154,16 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
   }, [running, speed, plan]);
 
   const snapshot = useMemo(() => (plan ? snapshotAt(plan, t) : null), [plan, t]);
+  const sampleTruck = useCallback(() => {
+    if (!plan) return null;
+    const current = snapshotAt(plan, tRef.current);
+    return { position: current.position, bearing: current.bearing, moving: running && !current.done && (current.phase?.driving ?? true) };
+  }, [plan, running]);
 
   const inject = useCallback(async (customMinutes?: number, customReason?: string) => {
     if (!plan || !option || injecting.current || override) return;
     injecting.current = true;
-    setBusy(true); setError("");
+    setBusy(true); setRunning(false); setT(tRef.current); setError("");
     const mins = customMinutes ?? disruptMinutes;
     const reason = customReason ?? disruptReason;
     const here = snapshotAt(plan, tRef.current);
@@ -309,7 +316,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
       truck: snapshot ? { position: snapshot.position, bearing: snapshot.bearing } : null,
       blockage, running,
       engaged: running || t > 0 || !!override,
-      followTruck,
+      followTruck, sampleTruck,
     },
     ready: !!plan, running, finished: !!plan && t >= plan.totalMinutes && t > 0,
     speed, progress: projected ? Math.min(1, elapsed / projected) : 0,
@@ -370,7 +377,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
           <button className="sim-play" onClick={() => (sim.running ? sim.pause() : sim.start())}
             aria-label={sim.running ? "Pause simulation" : "Start simulation"}>
             {sim.running ? <Pause size={17} /> : <Play size={17} />}
-            {sim.running ? "Pause" : sim.finished ? "Replay" : sim.progress > 0 ? "Resume" : "Simulate journey"}
+            {sim.running ? "Pause" : sim.finished ? "Replay" : sim.progress > 0 ? "Resume" : "Start replay"}
           </button>
           <button className="sim-ghost" onClick={sim.reset} aria-label="Reset simulation"><RotateCcw size={14} /></button>
           <div className="sim-speeds" role="group" aria-label="Simulation speed">
@@ -412,7 +419,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
               <option value="Severe weather · icy conditions">Severe weather</option>
               <option value="Vehicle breakdown / accident ahead">Accident</option>
             </select>
-            <button className="sim-disrupt" disabled={sim.busy || sim.blocked} onClick={() => sim.inject()}>
+            <button className="sim-disrupt" disabled={sim.busy || sim.blocked || sim.finished} onClick={() => sim.inject()}>
               {sim.busy ? <Loader2 size={14} className="spin" /> : <TriangleAlert size={14} />} Block road ahead
             </button>
             {showWeatherReroute&&<button className="sim-weather-reroute" disabled={sim.busy||sim.blocked} onClick={sim.rerouteWeather}>
@@ -443,7 +450,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
           <div>
             <small>Status</small>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <b className={phase?.driving ? "is-driving" : "is-holding"}>{phase?.label ?? "At origin"}</b>
+              <b className={phase?.driving ? "is-driving" : "is-holding"}>{sim.finished ? "Arrived" : phase?.label ?? "At origin"}</b>
               {phase && !phase.driving && !sim.finished && (
                 <button
                   type="button"
@@ -473,7 +480,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
             Auto-disrupt at 30% progress
           </label>
           <span style={{ color: "var(--muted)", fontSize: "10.5px" }}>
-            Scrub to set the demo truck position; incident reroutes start there. No live GPS is connected.
+            Drag the timeline to move the simulated truck.
           </span>
         </div>
       </div>
@@ -510,8 +517,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
 
       {sim.error && <div role="alert" className="notice notice--warn">{sim.error}</div>}
       <p className="sim-foot">
-        <ShieldCheck size={13} /> Replay of the computed plan at {MINUTES_PER_SECOND * sim.speed} simulated minutes per second.
-        Holds, transfers and legal rests are reproduced, not skipped. No live vehicle tracking exists in this prototype.
+        <ShieldCheck size={13} /> Simulated journey · {MINUTES_PER_SECOND * sim.speed} min/sec · Includes planned stops and rest periods.
         {sim.approximate && " This option has no road geometry, so the path shown is a straight connection."}
       </p>
     </div>

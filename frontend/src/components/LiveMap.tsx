@@ -453,6 +453,8 @@ export function LiveMap({
 
     return () => {
       ro?.disconnect();
+      truckMarker.current?.remove(); truckMarker.current = null;
+      blockMarker.current?.remove(); blockMarker.current = null;
       loadedMap.current = null;
       setReady(false);
       m.remove();
@@ -761,35 +763,52 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
     }
   }, [ready, styleVersion, data, traffic, incidents, offset, conditionsKey]);
 
-  // Simulated vehicle marker
+  // The map reads the replay clock directly, independently of React's readouts.
+  const pausedTruck = sim?.running ? null : sim?.truck;
   useEffect(() => {
     const m = map.current;
     if (!m || !ready || loadedMap.current !== m) return;
-    if (!sim?.truck) {
+    if (!sim?.engaged || !sim.sampleTruck) {
       truckMarker.current?.remove();
       truckMarker.current = null;
       return;
     }
-    const [lon, lat] = sim.truck.position;
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
-    const bearing = Math.round(sim.truck.bearing || 0);
-
+    const first = sim.sampleTruck();
+    if (!first) return;
     if (!truckMarker.current) {
       const el = document.createElement("div");
       el.className = "truck-marker";
-      el.setAttribute("aria-hidden", "false");
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", "Simulated freight truck");
       el.setAttribute("title", "Simulated freight vehicle");
-      el.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L18.5 20 L12 16 L5.5 20 Z"/></svg>';
+      el.innerHTML = '<svg viewBox="0 0 28 48" width="24" height="42" aria-hidden="true"><g fill="#173e37"><rect x="2" y="8" width="4" height="7" rx="1"/><rect x="22" y="8" width="4" height="7" rx="1"/><rect x="2" y="34" width="4" height="8" rx="1"/><rect x="22" y="34" width="4" height="8" rx="1"/></g><rect x="5" y="3" width="18" height="13" rx="4" fill="#fbd33b" stroke="#173e37" stroke-width="1.6"/><path d="M8 7h12v5H8z" fill="#23534d"/><rect x="5" y="18" width="18" height="26" rx="2.5" fill="#fff" stroke="#173e37" stroke-width="1.8"/><path d="M9 23v16m5-16v16m5-16v16" stroke="#ccdcd4" stroke-width="1.4"/><rect x="7" y="42" width="4" height="2" rx=".5" fill="#d3573e"/><rect x="17" y="42" width="4" height="2" rx=".5" fill="#d3573e"/></svg>';
       truckMarker.current = new maplibregl.Marker({ element: el, rotationAlignment: "map" })
-        .setLngLat([lon, lat])
-        .setRotation(bearing)
+        .setLngLat(first.position)
+        .setRotation(first.bearing)
         .addTo(m);
-    } else {
-      truckMarker.current.setLngLat([lon, lat]);
-      truckMarker.current.setRotation(bearing);
     }
-    truckMarker.current.getElement().classList.toggle("is-moving", !!sim.running);
-  }, [ready, sim?.truck, sim?.running]);
+    let frame = 0;
+    let last = performance.now();
+    let heading = truckMarker.current.getRotation();
+    const draw = (now: number) => {
+      const sample = sim.sampleTruck();
+      const marker = truckMarker.current;
+      if (!sample || !marker || loadedMap.current !== m) return;
+      const [lon, lat] = sample.position;
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+      const elapsed = Math.min(100, Math.max(1, now - last));
+      last = now;
+      const turn = ((sample.bearing - heading + 540) % 360 + 360) % 360 - 180;
+      heading += turn * (1 - Math.exp(-elapsed / 80));
+      marker.setLngLat([lon, lat]).setRotation(heading);
+      marker.getElement().classList.toggle("is-moving", sample.moving);
+      // A fixed map orientation avoids camera spins on tight road bends.
+      if (sim.followTruck) m.jumpTo({ center: [lon, lat] });
+      if (sim.running || Math.abs(turn) > 0.25) frame = requestAnimationFrame(draw);
+    };
+    draw(performance.now());
+    return () => cancelAnimationFrame(frame);
+  }, [ready, styleVersion, sim?.engaged, sim?.sampleTruck, sim?.running, sim?.followTruck, pausedTruck]);
 
   // Blockage marker
   useEffect(() => {
@@ -809,19 +828,6 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
       .setPopup(popup(`${sim.blockage.reason}\nSimulated obstruction · not a provider incident`))
       .addTo(m);
   }, [ready, sim?.blockage]);
-
-  // Follow truck camera
-  const lastFollow = useRef(0);
-  useEffect(() => {
-    const m = map.current;
-    if (!m || !ready || loadedMap.current !== m || !sim?.followTruck || !sim?.truck || !sim?.running) return;
-    const [lon, lat] = sim.truck.position;
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
-    const now = performance.now();
-    if (now - lastFollow.current < 120) return;
-    lastFollow.current = now;
-    m.easeTo({ center: [lon, lat], duration: 120, easing: (t) => t, essential: true });
-  }, [ready, sim?.followTruck, sim?.truck?.position, sim?.running]);
 
   useEffect(() => () => {
     truckMarker.current?.remove();
@@ -1051,8 +1057,9 @@ function Fallback({
         )}
         {sim?.engaged && sim?.truck && (
           <g transform={`translate(${X(sim.truck.position[0])}, ${Y(sim.truck.position[1])}) rotate(${Math.round(sim.truck.bearing)})`}>
-            <circle cx={0} cy={0} r={10} fill="#17765e" stroke="#fff" strokeWidth={2} />
-            <path d="M0 -6 L5 5 L0 2 L-5 5 Z" fill="#fff" />
+            <circle cx={0} cy={0} r={13} fill="#fff" stroke="#17765e" strokeWidth={1.5} />
+            <rect x={-4} y={-10} width={8} height={6} rx={1.5} fill="#fbd33b" stroke="#173e37" />
+            <rect x={-4} y={-3} width={8} height={13} rx={1} fill="#e4efe8" stroke="#173e37" />
           </g>
         )}
       </svg>

@@ -30,8 +30,13 @@ export function pointAtKm(coords: LngLat[], cum: number[], km: number): { positi
   if (coords.length === 0) return { position: [0, 0], bearing: 0 };
   if (coords.length === 1) return { position: coords[0], bearing: 0 };
   const target = Math.max(0, Math.min(cum[cum.length - 1], km));
-  let i = 1;
-  while (i < cum.length - 1 && cum[i] < target) i++;
+  let low = 1, high = cum.length - 1;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (cum[mid] < target) low = mid + 1;
+    else high = mid;
+  }
+  const i = low;
   const span = cum[i] - cum[i - 1];
   const f = span > 0 ? (target - cum[i - 1]) / span : 0;
   const a = coords[i - 1], b = coords[i];
@@ -101,7 +106,7 @@ export function buildPlan(option: RouteOption, fallbackCoords: LngLat[]): SimPla
     const driving = driveMinutes > 0 ? p.type === DRIVING : true;
     // Distance is shared between driving phases in proportion to their duration,
     // so the vehicle is stationary during every hold the planner computed.
-    const share = allocMinutes > 0 ? (totalKm * (p.endMin - p.startMin)) / allocMinutes : 0;
+    const share = driving && allocMinutes > 0 ? (totalKm * (p.endMin - p.startMin)) / allocMinutes : 0;
     phases.push({ ...p, driving, label: PHASE_LABEL[p.type] ?? p.type, km0: km, km1: km + share });
     km += share;
   }

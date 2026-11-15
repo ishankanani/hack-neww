@@ -1,9 +1,9 @@
 /* Journey simulation, saved-journey queue and the rebuilt savings page. */
 
 /* ---- simulated vehicle & blockage on the map ---- */
-.truck-marker{width:32px;height:32px;border-radius:50%;background:#17765e;color:#fff;display:grid;place-items:center;
-  border:2.5px solid #fff;box-shadow:0 3px 14px rgba(10,40,30,.55);pointer-events:auto;z-index:10;transition:transform 0.08s linear}
-.truck-marker.is-moving{box-shadow:0 0 0 7px rgba(23,118,94,.28),0 3px 14px rgba(10,40,30,.55);animation:truck-pulse 1.8s infinite}
+.truck-marker{width:44px;height:52px;border-radius:16px;background:rgba(255,255,255,.94);display:grid;place-items:center;
+  border:1.5px solid #17765e;box-shadow:0 3px 12px #183b3540;pointer-events:auto;z-index:10;will-change:transform}
+.truck-marker.is-moving{box-shadow:0 0 0 5px #17765e18,0 3px 12px #183b3540}
 @keyframes truck-pulse{0%{box-shadow:0 0 0 3px rgba(23,118,94,.4),0 3px 12px rgba(10,40,30,.45)}50%{box-shadow:0 0 0 9px rgba(23,118,94,.12),0 3px 12px rgba(10,40,30,.45)}100%{box-shadow:0 0 0 3px rgba(23,118,94,.4),0 3px 12px rgba(10,40,30,.45)}}
 .sim-skip-hold{background:#fdf2df;border-color:#ebd3ab;color:#8d681d;font-weight:700;border-radius:6px;cursor:pointer}
 .sim-skip-hold:hover{background:#fbe7c3}
