@@ -93,6 +93,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
   const [speed, setSpeed] = useState(1);
   const [t, setT] = useState(0);
   const [override, setOverride] = useState<SimPlan | null>(null);
+  const [replayPlan, setReplayPlan] = useState<SimPlan | null>(null);
   const [offset, setOffset] = useState(0); // minutes already driven before a diversion
   const [blockage, setBlockage] = useState<SimView["blockage"]>(null);
   const [ghost, setGhost] = useState<LngLat[] | null>(null);
@@ -116,23 +117,26 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
   }, [option, nodes]);
 
   const basePlan = useMemo(() => (option ? buildPlan(option, fallback) : null), [option, fallback]);
-  const plan = override ?? basePlan;
+  const originalPlan = replayPlan ?? basePlan;
+  const plan = override ?? originalPlan;
 
   const reset = useCallback(() => {
-    setRunning(false); tRef.current = 0; setT(0); setOverride(null); setOffset(0);
+    setRunning(false); tRef.current = 0; setT(0); setOverride(null); setReplayPlan(null); setOffset(0);
     setBlockage(null); setGhost(null); setReroute(null); setError("");
     setCommitted(false); setBlockedEvent(false); injecting.current = false;
   }, []);
 
   const seek = useCallback((fraction: number) => {
     if (!plan) return;
+    if (!replayPlan && basePlan) setReplayPlan(basePlan);
     const targetMin = Math.max(0, Math.min(plan.totalMinutes, fraction * plan.totalMinutes));
     tRef.current = targetMin;
     setT(targetMin);
-  }, [plan]);
+  }, [plan, replayPlan, basePlan]);
 
-  // A different route option is a different journey — never keep stale state.
-  const optionKey = option ? option.quote_id + option.path.join(">") : "";
+  // Quote IDs refresh routinely; reset only for a different road, input or scenario.
+  const optionKey = useMemo(() => option ? JSON.stringify([option.path, option.depart_at, option.geometry,
+    option.zone_impacts, deadline, truck, weatherZones.map(z => [z.id, z.lon, z.lat, z.radius_km, z.start, z.end])]) : "", [option, deadline, truck, weatherZones]);
   useEffect(() => { reset(); }, [optionKey, reset]);
 
   // Animation loop.
@@ -163,6 +167,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
   const inject = useCallback(async (customMinutes?: number, customReason?: string) => {
     if (!plan || !option || injecting.current || override) return;
     injecting.current = true;
+    if (!replayPlan && basePlan) setReplayPlan(basePlan);
     setBusy(true); setRunning(false); setT(tRef.current); setError("");
     const mins = customMinutes ?? disruptMinutes;
     const reason = customReason ?? disruptReason;
@@ -239,7 +244,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     } finally {
       setBusy(false); injecting.current = false;
     }
-  }, [plan, option, options, override, nodes, truck, disruptMinutes, disruptReason]);
+  }, [plan, option, options, override, nodes, truck, disruptMinutes, disruptReason, replayPlan, basePlan]);
 
   // Automatic blockage only if enabled
   useEffect(() => {
@@ -252,6 +257,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     const impacts=option.zone_impacts ?? [];
     if (!impacts.length) { setError("Select a route affected by a simulated weather zone first."); return; }
     injecting.current=true; setBusy(true); setRunning(false); setError("");
+    if (!replayPlan && basePlan) setReplayPlan(basePlan);
     const here=snapshotAt(plan,tRef.current);
     const delay=Math.max(...impacts.map(z=>z.delay_minutes));
     const zone=weatherZones.find(z=>impacts.some(i=>i.id===z.id));
@@ -289,7 +295,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     } catch (e) {
       setError(`Weather reroute failed: ${String(e)}. Keep the current plan on hold for manager review.`);
     } finally { setBusy(false); injecting.current=false; }
-  },[plan,option,truck,busy,override,weatherZones,nodes]);
+  },[plan,option,truck,busy,override,weatherZones,nodes,replayPlan,basePlan]);
 
   const commit = useCallback(async () => {
     if (!blockedEvent || committed) return;
@@ -307,7 +313,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
   }, [blockedEvent, committed, onCommitted, blockage, disruptMinutes]);
 
   const elapsed = offset + t;
-  const projected = override ? offset + override.totalMinutes : basePlan?.totalMinutes ?? 0;
+  const projected = override ? offset + override.totalMinutes : originalPlan?.totalMinutes ?? 0;
 
   return {
     view: {
@@ -321,9 +327,9 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     ready: !!plan, running, finished: !!plan && t >= plan.totalMinutes && t > 0,
     speed, progress: projected ? Math.min(1, elapsed / projected) : 0,
     snapshot, elapsedMinutes: elapsed,
-    plannedMinutes: basePlan?.totalMinutes ?? 0, projectedMinutes: projected,
-    etaMs: basePlan ? basePlan.departAt + projected * 60000 : null,
-    plannedEtaMs: option ? Date.parse(option.eta) : null,
+    plannedMinutes: originalPlan?.totalMinutes ?? 0, projectedMinutes: projected,
+    etaMs: originalPlan ? originalPlan.departAt + projected * 60000 : null,
+    plannedEtaMs: originalPlan ? originalPlan.departAt + originalPlan.totalMinutes * 60000 : null,
     reroute, blocked: !!blockage, busy, error, committed,
     approximate: !!plan?.approximate,
     deadlineMs: deadline ? Date.parse(deadline) : null,
@@ -334,6 +340,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     seek, rerouteWeather: () => { void rerouteWeather(); },
     skipHold: () => {
       if (!plan) return;
+      if (!replayPlan && basePlan) setReplayPlan(basePlan);
       const currentT = tRef.current;
       const currentPhase = plan.phases.find((p) => currentT >= p.startMin && currentT < p.endMin);
       if (currentPhase && !currentPhase.driving) {
@@ -349,6 +356,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
       }
     },
     start: () => {
+      if (!replayPlan && basePlan) setReplayPlan(basePlan);
       if (plan && tRef.current >= plan.totalMinutes) {
         tRef.current = 0;
         setT(0);
@@ -390,6 +398,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
           <button
             type="button"
             className={`sim-follow-btn ${sim.followTruck ? "active" : ""}`}
+            aria-pressed={sim.followTruck}
             onClick={() => sim.setFollowTruck(!sim.followTruck)}
             title="Keep map camera centered on truck"
           >
@@ -517,7 +526,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
 
       {sim.error && <div role="alert" className="notice notice--warn">{sim.error}</div>}
       <p className="sim-foot">
-        <ShieldCheck size={13} /> Simulated journey · {MINUTES_PER_SECOND * sim.speed} min/sec · Includes planned stops and rest periods.
+        <ShieldCheck size={13} /> Replay of the plan at start · {MINUTES_PER_SECOND * sim.speed} min/sec · Includes stops and rest periods.
         {sim.approximate && " This option has no road geometry, so the path shown is a straight connection."}
       </p>
     </div>

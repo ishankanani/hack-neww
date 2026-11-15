@@ -53,6 +53,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   const conditionsKey = useMemo(() => JSON.stringify(planned), [planned]);
   const forecasts = offset === -1 && routeWeather.length ? routeWeather : data?.weather ?? EMPTY;
   const choose = useRef(onSelect); choose.current = onSelect;
+  const lastFit = useRef("");
 
   useEffect(() => {
     let alive = true;
@@ -83,7 +84,10 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
     native.fitBounds(bounds, 42);
     maps.event.addListenerOnce(native, "idle", () => { if ((native.getZoom() ?? 5) > 10) native.setZoom(10); });
   }, [planned]);
-  useEffect(() => { if (ready) fit(); }, [ready, conditionsKey, fit, layout]);
+  useEffect(() => {
+    const key = `${conditionsKey}:${layout}`;
+    if (ready && lastFit.current !== key) { lastFit.current = key; fit(); }
+  }, [ready, conditionsKey, fit, layout]);
   useEffect(() => { map.current?.setMapTypeId(mapType); }, [mapType, ready]);
 
   useEffect(() => {

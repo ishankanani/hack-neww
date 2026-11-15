@@ -21,12 +21,20 @@ Google's [Maps Demo Key](https://developers.google.com/maps/documentation/javasc
 
 After the account owner approves those terms and the key is issued:
 
-1. Restrict the browser key to Maps JavaScript API and the website origins actually used, including `https://dachser-transit-planner.vercel.app/*`, `http://127.0.0.1:5176/*` and `http://localhost:5176/*`. Keep unrelated APIs disabled where key settings permit.
+1. Restrict the browser key to Maps JavaScript API and the website origins actually used: `https://dachser-transit-planner.vercel.app`, `http://127.0.0.1:5176` and `http://localhost:5176`. The loader sends the origin referrer. Keep unrelated APIs disabled on this key.
 2. Save it to ignored `frontend/.env.local` as `VITE_GOOGLE_MAPS_API_KEY`. Set `VITE_GOOGLE_MAP_ID=DEMO_MAP_ID` for the prototype. Restart Vite because build environment variables are not hot reloaded.
 3. Set the same variables in the Vercel project's Production build environment and redeploy. The browser key is intentionally visible in the frontend bundle; website and API restrictions are the protection. Never reuse the backend TomTom credential.
 4. Confirm a real Google basemap renders, switch routes, place and move a weather zone, play/pause the truck and try the follow-camera. Verify that active zones still affect the backend route responses.
 
 If no Google key is configured, the existing map remains usable. Google load/authentication failures display an error and offer the backup map. They are not reported as a successful Google integration. Neither signing into Google nor accepting its legal terms is performed silently.
+
+## Setup checkpoint
+
+On 15 November 2026, the account owner explicitly approved the Maps Demo Project Terms and creation of a no-billing demo key. The generated key was limited to **Maps JavaScript API** and the three origins above. Its value is stored in ignored local configuration and Vercel's encrypted Production environment; it is not committed to Git. No billing account was added.
+
+The real Google basemap and a 5 km tornado scenario were verified locally. The backend returned a weather-clear detour with 59.5 km additional road distance, and the map retained Google's basemap while rendering that road and the tornado overlay. This validates the integration path for that scenario, not every possible road or weather outcome.
+
+Truck playback and pause were verified on the real Google map. A routine quote refresh now retains the replay's starting plan and progress, instead of resetting because the quote ID changed. The Google camera refits for road or layout changes, not for an identical road in a refreshed quote. Reset loads the newest replay plan; changing the road, departure, truck profile, deadline or weather scenario resets the replay automatically.
 
 ## Company pilot
 
