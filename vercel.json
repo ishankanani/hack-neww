@@ -13,6 +13,7 @@
       "root": ".",
       "framework": "fastapi",
       "entrypoint": "backend.app.main:app",
+      "buildCommand": "python scripts/fetch_hosted_snapshot.py",
       "functions": {
         "backend/app/main.py": {
           "maxDuration": 120,

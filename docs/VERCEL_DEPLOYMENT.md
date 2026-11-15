@@ -30,4 +30,10 @@ Preparation checks passed: production frontend build; cloud-mode FastAPI startup
 - A POST to `/api/route` returned four route options, a recommended option and road geometry. This verifies a route calculation, not every operational workflow or durable shared state.
 - The anonymous Windows deployment fallback had failed; the successful deployment used the authenticated Vercel connector and GitHub source with remote Linux builds.
 
-Saved plans and scenarios still use ephemeral hosted-demo storage. The deployment does not add a shared database, live telematics or carrier capacity integration.
+## Previous dataset upload
+
+At the user's explicit request, the local baseline was uploaded to Vercel: 14 saved journeys, seven operational events, five weather zones, five manager decisions and three demo-session operation files. The compressed snapshot is uploaded directly to Vercel; it is not committed to the public GitHub repository. Credentials and local caches are excluded.
+
+The production environment references the upload through `HOSTED_SNAPSHOT_URL` and `HOSTED_SNAPSHOT_SHA1`. `scripts/fetch_hosted_snapshot.py` verifies and bundles it during the backend build. Each cold instance restores missing store files from that bundled baseline. Existing files in a warm instance are preserved. `data/hosted_snapshot*` are generated files ignored by Git; the deployment's `/api/network` metadata reports the bundled baseline counts.
+
+The uploaded baseline remains part of that deployment, but subsequent edits still use ephemeral hosted-demo storage. A server reset returns those records to the uploaded baseline. This does not add a transactional shared database, live telematics or carrier capacity integration.
