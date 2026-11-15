@@ -99,6 +99,7 @@ export default function App() {
           <span>WORKSPACE <span>/</span> {TABS.find((t) => t.id === tab)?.label.toUpperCase()}</span>
           <span><Activity size={12} /> {nodes.length} facilities · {ops?.events.length ?? 0} scenario events</span>
         </div>
+        {net?.deployment?.message&&<div className="notice notice--warn" role="status">{net.deployment.message}</div>}
         {err && <div role="alert" className="notice notice--warn">Connection issue: {err}<button className="linkbtn" onClick={refresh}>Retry</button></div>}
         {alerts.length > 0 && tab !== "control" && (
           <button className="alert-strip" onClick={() => selectTab("control")}>

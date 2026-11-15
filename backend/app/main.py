@@ -7,6 +7,8 @@ status); manager hub delays; audit. See README for the section-by-section map.
 from __future__ import annotations
 
 import os
+from .runtime import configure_runtime, deployment_info
+configure_runtime()
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -72,7 +74,7 @@ async def lifespan(app: FastAPI):
     S["hub_delays"] = S["operations"].data.setdefault("hub_delays", {})
     S["audit"] = []
     S["ships"] = Shipments(_ctx())
-    S["ships"].seed_if_empty()
+    if os.environ.get("SEED_DEMO_SHIPMENTS","1")=="1":S["ships"].seed_if_empty()
     _audit("startup", f"{len(S['network']['nodes'])} hubs, {len(S['holidays'])} holidays, "
                       f"{len(S['history'])} lane histories, {len(S['ships'].list())} shipments")
     try:
@@ -167,7 +169,7 @@ def health():
 @app.get("/api/network")
 def network():
     n = S["network"]
-    return {"hub_id": n["hub_id"], "nodes": list(n["nodes"].values()), "edges": list(n["edges"].values())}
+    return {"hub_id": n["hub_id"], "nodes": list(n["nodes"].values()), "edges": list(n["edges"].values()),"deployment":deployment_info()}
 
 
 @app.get("/api/hubs")
@@ -701,13 +703,14 @@ def get_settings():
     key = S["providers"].tomtom.key
     return {
         "tomtom_configured": bool(key),
-        "tomtom_masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else ("configured" if key else ""),
+        "tomtom_masked": ("configured" if key else "") if os.environ.get("VERCEL")=="1" else f"{key[:4]}...{key[-4:]}" if len(key) > 8 else ("configured" if key else ""),
         "traffic_status": S["providers"].traffic.status(),
         "traffic_mode": "live" if key else "simulated"
     }
 
 @app.post("/api/settings/tomtom")
 def update_tomtom_key(req: SettingsTomTomReq):
+    if os.environ.get("VERCEL")=="1":raise HTTPException(403,"Configure TOMTOM_API_KEY in the hosting environment; public credential editing is disabled")
     new_key = req.key.strip()
     S["providers"].tomtom.set_key(new_key)
     S["providers"].traffic.configured = bool(new_key)

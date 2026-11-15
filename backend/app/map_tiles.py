@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 router = APIRouter()
-CACHE = Path(__file__).resolve().parents[2] / ".runtime" / "map-tiles"
+CACHE = Path(os.environ.get("MAP_TILE_CACHE_DIR",str(Path(__file__).resolve().parents[2] / ".runtime" / "map-tiles")))
 MAX_AGE = 7 * 24 * 60 * 60
 USER_AGENT = "DachserTransitPlannerHackathon/1.0 (+https://github.com/patelpalash/final-hackathon-project)"
 

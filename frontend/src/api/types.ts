@@ -1,6 +1,6 @@
 export interface NetNode { id: string; name: string; type: "hub" | "branch"; lat: number; lon: number; relation?: string; source: string; }
 export interface Edge { id: string; from: string; to: string; km: number; base_drive_minutes: number; cost_eur: number; cost_special_eur: number; capacity_ldm: number; relation: string; source: string; }
-export interface NetworkDoc { hub_id: string; nodes: NetNode[]; edges: Edge[]; }
+export interface NetworkDoc { deployment?:{hosting:string;storage:string;message:string|null}; hub_id: string; nodes: NetNode[]; edges: Edge[]; }
 
 export interface TransferStat { samples: number; spillover_rate: number; avg_utilisation: number; avg_transfer_minutes: number; median_transfer_minutes: number; range_minutes: number[]; source: string; }
 export interface RelationHistory { samples: number; avg_utilisation: number; spillover_rate: number; special_trip_rate: number; avg_line_trailers: number; avg_daily_cost_eur: number; avg_daily_fuel_l: number; avg_volume_ldm: number; reliability_pct: number; source: string; }
