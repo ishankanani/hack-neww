@@ -1,5 +1,6 @@
 import type { WeatherMapSurface } from "./WeatherMapSurface";
 import type { WeatherZone } from "../api/types";
+import { weatherViewportClip } from "./weatherViewport";
 
 export const googlePosition = (p: number[]): google.maps.LatLngLiteral => ({ lat: p[1], lng: p[0] });
 export const googlePath = (coords: number[][]) => coords.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1])).map(googlePosition);
@@ -16,28 +17,58 @@ export function googleWeatherSurface(maps: typeof google.maps, map: google.maps.
   const overlay = new maps.OverlayView();
   const root = document.createElement("div"); root.className = "google-weather-effects";
   const effects = new Map<string, { zone: WeatherZone; element: HTMLDivElement }>();
+  let disposed = false, frame = 0;
+  function attachRoot() {
+    const pane = overlay.getPanes()?.overlayLayer;
+    if (pane && root.parentElement !== pane) pane.append(root);
+  }
   function positionEffects() {
+    if (disposed) return;
+    attachRoot();
     const projection = overlay.getProjection(); if (!projection) return;
+    const width = map.getDiv().clientWidth, height = map.getDiv().clientHeight;
+    if (width <= 0 || height <= 0) return;
+    // Container pixels locate the viewport; div pixels account for Google's pane translation.
+    const corner = projection.fromContainerPixelToLatLng(new maps.Point(0, 0), true);
+    const origin = corner && projection.fromLatLngToDivPixel(corner);
+    if (!origin || !Number.isFinite(origin.x) || !Number.isFinite(origin.y)) return;
+    root.style.left = `${origin.x}px`; root.style.top = `${origin.y}px`;
+    root.style.width = `${width}px`; root.style.height = `${height}px`;
     effects.forEach(({ zone, element }) => {
-      const center = projection.fromLatLngToDivPixel(new maps.LatLng(zone.lat, zone.lon));
+      const center = projection.fromLatLngToContainerPixel(new maps.LatLng(zone.lat, zone.lon));
       const lonKm = 111.32 * Math.max(.1, Math.cos(zone.lat * Math.PI / 180));
-      const edge = projection.fromLatLngToDivPixel(new maps.LatLng(zone.lat, zone.lon + zone.radius_km / lonKm));
+      const edge = projection.fromLatLngToContainerPixel(new maps.LatLng(zone.lat, zone.lon + zone.radius_km / lonKm));
       if (!center || !edge) return;
-      const r = Math.max(1, Math.abs(center.x - edge.x));
-      element.style.left = `${center.x - r}px`; element.style.top = `${center.y - r}px`;
-      element.style.width = element.style.height = `${r * 2}px`; element.style.setProperty("--zone-diameter", `${r * 2}px`);
+      const r = Math.abs(center.x - edge.x);
+      // Ignore a transient invalid projection rather than losing the last good frame.
+      if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(r) || r <= 0) return;
+      const clip = weatherViewportClip(center.x, center.y, r, width, height);
+      element.hidden = !clip;
+      if (!clip) return;
+      element.style.left = `${clip.left}px`; element.style.top = `${clip.top}px`;
+      element.style.width = `${clip.width}px`; element.style.height = `${clip.height}px`;
+      element.style.clipPath = `circle(${clip.radius}px at ${clip.centerX}px ${clip.centerY}px)`;
+      element.style.setProperty("--zone-center-x", `${clip.centerX}px`);
+      element.style.setProperty("--zone-center-y", `${clip.centerY}px`);
+      element.style.setProperty("--zone-radius", `${clip.radius}px`);
+      element.style.setProperty("--tornado-size", `${Math.max(32, Math.min(160, clip.radius))}px`);
+      element.style.setProperty("--zone-diameter", `${clip.height + 60}px`);
     });
   }
+  function scheduleDraw() {
+    if (disposed || frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; positionEffects(); listeners.forEach(listener => listener()); });
+  }
   let notified = false;
-  overlay.onAdd = () => { overlay.getPanes()?.overlayLayer.append(root); };
+  overlay.onAdd = () => { attachRoot(); scheduleDraw(); };
   overlay.onRemove = () => { root.remove(); };
   overlay.draw = () => {
     if (!notified) { notified = true; onReady(); }
-    positionEffects();
-    listeners.forEach(listener => listener());
+    scheduleDraw();
   };
   overlay.setMap(map);
-  const change = map.addListener("bounds_changed", () => listeners.forEach(listener => listener()));
+  const changes = ["bounds_changed", "zoom_changed", "idle", "projection_changed", "maptypeid_changed", "resize"]
+    .map(event => map.addListener(event, scheduleDraw));
 
   const surface: WeatherMapSurface = {
     rendersWeatherEffects: true,
@@ -53,9 +84,9 @@ export function googleWeatherSurface(maps: typeof google.maps, map: google.maps.
     focus(point) { map.panTo(googlePosition(point)); if ((map.getZoom() ?? 5) < 7) map.setZoom(7); },
     drawWeather(zones, onSelect, onMove) {
       const shapes = zones.map(zone => {
-        const element = document.createElement("div"); element.className = `sim-weather-effect sim-weather-effect--${zone.kind}`; element.setAttribute("aria-hidden", "true");
+        const element = document.createElement("div"); element.className = `sim-weather-effect sim-weather-effect--${zone.kind}`; element.setAttribute("aria-hidden", "true"); element.dataset.weatherZone = zone.id;
         for (let i = 0; i < (zone.kind === "tornado" ? 9 : 16); i++) {
-          const particle = document.createElement("span"); particle.className = "sim-weather-particle"; particle.style.left = `${(i * 37) % 100}%`; particle.style.animationDelay = `-${(i % 7) * .43}s`; particle.textContent = zone.kind === "snow" ? "❄" : zone.kind === "rain" ? "╱" : "·"; element.append(particle);
+          const particle = document.createElement("span"); particle.className = "sim-weather-particle"; particle.style.left = `${(i * 37) % 100}%`; if (zone.kind === "tornado") particle.style.top = `${12 + (i * 29) % 72}%`; particle.style.animationDelay = `-${(i % 7) * .43}s`; particle.textContent = zone.kind === "snow" ? "❄" : zone.kind === "rain" ? "╱" : "·"; element.append(particle);
         }
         if (zone.kind === "tornado") { const core = document.createElement("i"); core.className = "sim-tornado-core"; element.append(core); }
         root.append(element); effects.set(zone.id, { zone, element });
@@ -68,6 +99,7 @@ export function googleWeatherSurface(maps: typeof google.maps, map: google.maps.
         const title = `Simulated ${zone.kind} · ${zone.radius_km} km radius${onMove ? " · drag to move" : ""}`;
         button.title = title; button.setAttribute("aria-label", title);
         const marker = googleMarker(maps, map, { lat: zone.lat, lng: zone.lon }, button, title, !!onMove);
+        marker.collisionBehavior = maps.CollisionBehavior.REQUIRED;
         marker.zIndex = 50;
         button.addEventListener("click", () => onSelect(zone));
         const moving = marker.addListener("drag", () => {
@@ -93,5 +125,5 @@ export function googleWeatherSurface(maps: typeof google.maps, map: google.maps.
       return () => shapes.forEach(({ zone, element, circle, marker, dragged, moving }) => { effects.delete(zone.id); element.remove(); moving.remove(); dragged.remove(); circle.setMap(null); marker.map = null; });
     },
   };
-  return { surface, dispose() { change.remove(); effects.clear(); listeners.clear(); overlay.setMap(null); } };
+  return { surface, dispose() { disposed = true; cancelAnimationFrame(frame); changes.forEach(change => change.remove()); effects.clear(); listeners.clear(); overlay.setMap(null); } };
 }

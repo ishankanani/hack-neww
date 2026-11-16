@@ -10,5 +10,10 @@
 .google-live-map .facility-marker, .google-live-map .weather-marker, .google-live-map .incident-marker { cursor: pointer; }
 .google-live-map .truck-marker { transform-origin: center; }
 .google-weather-effects { position: absolute; left: 0; top: 0; pointer-events: none; }
+.google-weather-effects .sim-weather-effect { border: 0; border-radius: 0; box-shadow: none; }
+.google-weather-effects .sim-weather-effect--snow { background: radial-gradient(circle var(--zone-radius) at var(--zone-center-x) var(--zone-center-y), #c8e9ff6b 0%, #6bb3e74b 64%, #3388c438 100%); }
+.google-weather-effects .sim-weather-effect--rain { background: radial-gradient(circle var(--zone-radius) at var(--zone-center-x) var(--zone-center-y), #647bc488 0%, #485db166 68%, #283b8d55 100%); }
+.google-weather-effects .sim-weather-effect--tornado { background: radial-gradient(circle var(--zone-radius) at var(--zone-center-x) var(--zone-center-y), #d96b9966 0%, #97376466 60%, #5c254957 100%); }
+.google-weather-effects .sim-tornado-core { left: calc(var(--zone-center-x) - var(--tornado-size) / 2); top: calc(var(--zone-center-y) - var(--tornado-size) / 2); width: var(--tornado-size); height: var(--tornado-size); }
 .google-live-map .sim-place-layer { bottom: 32px; }
 @media (max-width: 650px) { .google-map-canvas { height: 390px; } .google-provider-label { font-size: 11px; } }
