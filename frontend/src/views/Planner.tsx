@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, ArrowRightLeft, ShieldCheck, Loader2, Save } from "lucide-react";
 import { api } from "../api/client";
-import type { NetNode, RouteResp, Operations, TruckProfile, WeatherZoneInput, JourneyExample } from "../api/types";
+import type { NetNode, RouteResp, Operations, TruckProfile, WeatherZoneInput, JourneyExample, Shipment } from "../api/types";
 import { RouteCompare } from "../components/RouteCompare";
 import { SavedJourneys } from "../components/SavedJourneys";
 import { localInput } from "../lib";
@@ -35,7 +35,7 @@ function validatePlannerInputs(v:{origin:string;destination:string;depart:string
  if(Number.isFinite(weight)&&Number.isFinite(gross)&&weight>gross)errors.gross_weight_kg="Gross vehicle weight must be at least the shipment weight.";
  return Object.fromEntries(Object.entries(errors).filter(([,message])=>message)) as Record<string,string>;
 }
-export function Planner({nodes,revision,onChange,onReview}:{nodes:NetNode[];revision:number;onChange:()=>void;onReview:()=>void}){
+export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNode[];revision:number;onChange:()=>void;onReview:()=>void;onSaved?:(shipment:Shipment)=>void}){
  const [origin,setOrigin]=useState("R16"),[dest,setDest]=useState("R21");
  const [depart,setDepart]=useState(()=>localInput(new Date())),[deadline,setDeadline]=useState(()=>localInput(new Date(Date.now()+3*86400000)));
  const [weight,setWeight]=useState("12000"),[value,setValue]=useState("180000");
@@ -101,7 +101,7 @@ export function Planner({nodes,revision,onChange,onReview}:{nodes:NetNode[];revi
   try{for(const id of ids) await api.deleteWeatherZone(id)}
   finally{await weatherChanged(false)}
  }
- async function save(recommended=false){if(inputInvalid)return;setSaving(true);setErr("");try{const b=lastBody.current;if(!b)throw Error("Calculate a route first");const chosen=resp?.options[recommended?0:selected];const ship=await api.createShipment({...b,planned_departure:b.depart_at,selected_path:chosen?.path,selected_route_id:chosen?.route_id});setMessage(`${ship.id} saved. It is listed below and in the control room review queue.`);setSaveTick(n=>n+1);onChange()}catch(e){setErr(String(e))}finally{setSaving(false)}}
+ async function save(recommended=false){if(inputInvalid)return;setSaving(true);setErr("");try{const b=lastBody.current;if(!b)throw Error("Calculate a route first");const chosen=resp?.options[recommended?0:selected];const ship=await api.createShipment({...b,planned_departure:b.depart_at,selected_path:chosen?.path,selected_route_id:chosen?.route_id});onSaved?.(ship);setMessage(`${ship.id} saved. It is listed below and in the control room review queue.`);setSaveTick(n=>n+1);onChange()}catch(e){setErr(String(e))}finally{setSaving(false)}}
  function loadExample(example:JourneyExample){requestId.current++;const r=example.request;setSample(example);setSampleWeather(false);setOrigin(r.origin);setDest(r.destination);setDepart(localInput(new Date(r.depart_at)));setDeadline(localInput(new Date(r.required_delivery)));setWeight(String(r.weight_kg));setValue(String(r.value_eur));setOptimization(r.optimization);setResp(null);setMessage("");setErr("")}
  function weekendDemo(){const next=new Date();next.setDate(next.getDate()+((6-next.getDay()+7)%7||7));next.setHours(18,0,0,0);setDepart(localInput(next));setDeadline(localInput(new Date(next.getTime()+63*3600000)));setOrigin("R16");setDest("R21");setSample(null);setSampleWeather(false);setResp(null);setMessage("")}
  const dirty=resp&&JSON.stringify(lastBody.current)!==JSON.stringify((()=>{try{return body()}catch{return null}})());

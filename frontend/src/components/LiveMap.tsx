@@ -11,6 +11,7 @@ import { GoogleLiveMap } from "./GoogleLiveMap";
 import { GOOGLE_MAPS_KEY } from "./googleMapsApi";
 import { routePointForIncident } from "./mapRouteGeometry";
 import { TRUCK_GLYPH } from "./truckGlyph";
+import { RouteWeatherReadout } from "./RouteWeatherReadout";
 
 function buildHubPopupHtml(
   n: NetNode,
@@ -213,6 +214,7 @@ function OpenStreetMap({
   comparisonGeometry,
   completedGeometry,
   alternatives = [],
+  showAlternatives = false,
   onSelect,
   routeWeather = [],
   trafficSections = [],
@@ -234,6 +236,7 @@ function OpenStreetMap({
   comparisonGeometry?: number[][][] | null;
   completedGeometry?: number[][];
   alternatives?: RouteOption[];
+  showAlternatives?: boolean;
   onSelect?: (i: number) => void;
   routeWeather?: LiveWeather[];
   trafficSections?: { geometry: number[][]; delay_minutes: number; description: string }[];
@@ -565,7 +568,7 @@ function OpenStreetMap({
     if (!m || !ready || loadedMap.current !== m) return;
     const alt = m.getSource("alternatives") as maplibregl.GeoJSONSource | undefined;
     if (alt) {
-      const features = alternatives
+      const features = (showAlternatives ? alternatives : [])
         .filter((o) => o.geometry?.length)
         .map((o) => ({
           type: "Feature" as const,
@@ -574,7 +577,7 @@ function OpenStreetMap({
         }));
       alt.setData({ type: "FeatureCollection", features });
     }
-  }, [ready, styleVersion, altKey, alternatives]);
+  }, [ready, styleVersion, altKey, alternatives, showAlternatives]);
 
   const comparisonKey = useMemo(() => JSON.stringify(comparisonGeometry ?? []), [comparisonGeometry]);
   useEffect(()=>{
@@ -843,7 +846,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
               </button>
             );
           })}
-          <details className="map-settings">
+          <details className="map-settings" open>
             <summary>Map settings</summary>
             <div className="map-settings-menu">
               {([
@@ -929,7 +932,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
       </MapWeatherSimulation>
       <div className="map-legend">
         <span><i style={{ background: "#17765e" }} /> Selected route</span>
-        <span><i style={{ background: "#82909c" }} /> Alternatives · click to compare</span>
+        {showAlternatives&&<span><i style={{ background: "#82909c" }} /> Alternatives · click to compare</span>}
         {!!comparisonGeometry?.length && <span><i className="legend-dash" style={{ background: "#d86135" }} /> Weather-affected segment</span>}
         <span><i style={{ background: "#de7043" }} /> Traffic impact</span>
         {weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} /> Simulated weather zone</span>}
@@ -938,16 +941,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
       {data?.incidents.status === "ERROR" && <div className="map-note">Traffic incidents could not be refreshed. Coverage may be incomplete.</div>}
       {fallback && webglAvailable && <div className="map-note">Road-map tiles are temporarily unavailable. <button className="linkbtn" onClick={() => { failedBasemaps.current.clear(); baseTileFailures.current = { count: 0, since: 0 }; setBasemap("osm"); setError(""); setFallback(false); }}>Retry road map</button></div>}
       {error && <div role="alert" className="map-note">{error}</div>}
-      <details className="weather-readout">
-        <summary>Weather along the route · {forecasts.filter((w) => w.status === "FORECAST").length} forecast samples</summary>
-        {forecasts.map((w, i) => (
-          <div key={w.id + i}>
-            <span>{w.condition ?? w.status} · {w.temperature_c ?? "—"}°C</span>
-            <span>{dt(w.valid_at)} · {w.status} · wind {w.wind_kmh ?? "—"} km/h</span>
-          </div>
-        ))}
-        <p>Previewing a time changes the overlay only. The planner refreshes ETAs every 2 minutes while active; refresh manually for an immediate update. Weather impacts are modelled, not measured delays.</p>
-      </details>
+      <RouteWeatherReadout forecasts={forecasts}/>
       {showKeyModal && (
         <div className="key-modal-overlay" onClick={() => setShowKeyModal(false)}>
           <div className="key-modal" onClick={(e) => e.stopPropagation()}>

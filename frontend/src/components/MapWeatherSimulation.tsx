@@ -196,7 +196,7 @@ export function MapWeatherSimulation({
   const enabled = !demo && !!onAddWeatherZone;
 
   return <>
-    {enabled && <details className="weather-simulator" open={active.length > 0 || !!kind}>
+    {enabled && <details className="weather-simulator" open>
       <summary className="weather-simulator-heading"><strong>Weather simulation {active.length > 0 ? `· ${active.length} active` : ""}</strong><span>Drop snow, rain or tornado on the route</span>
         {(active.length > 0 || kind) && <button type="button" className="sim-cancel-weather" disabled={busy} onClick={(e) => { e.preventDefault(); void cancelWeatherSimulation(); }}>× Cancel weather simulation</button>}
       </summary>

@@ -114,4 +114,4 @@ def action_comparison(ship):
 
 
 def approvable(option):
-    return option.get("avoidance_status") in {"CLEAR","NO_ZONE"} and option.get("capacity",{}).get("feasible",True)
+    return option.get("route_feasible",True) and option.get("avoidance_status") in {"CLEAR","NO_ZONE"} and option.get("capacity",{}).get("feasible",True)

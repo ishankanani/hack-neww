@@ -21,6 +21,7 @@ from .eta import compute_journey
 from .risk import assess
 from .operations import parse
 from .live import DEFAULT_TRUCK
+from . import persistence
 
 STORE_DIR = os.environ.get("STORE_DIR", os.path.join(os.getcwd(), "store"))
 STORE = os.path.join(STORE_DIR, "shipments.json")
@@ -77,14 +78,17 @@ def shipment_traffic_exposure_minutes(ship, event, pending_only=False):
 
 
 def _load():
+    baseline={}
     try:
         with open(STORE, encoding="utf-8") as fh:
-            return json.load(fh)
+            baseline=json.load(fh)
     except Exception:
-        return {}
+        pass
+    return persistence.load("shipments.json",baseline,force=True) if persistence.configured() else baseline
 
 
 def _save(d):
+    if persistence.save("shipments.json",d):return
     os.makedirs(STORE_DIR, exist_ok=True)
     temporary = STORE + ".tmp"
     with open(temporary, "w", encoding="utf-8") as fh:
@@ -187,7 +191,12 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
         options.extend(additions)
     from .optimization import decorate
     from .capacity import evaluate as evaluate_capacity
-    for option in options:option["capacity"]=evaluate_capacity(option,ctx,ldm)
+    from .manager_routes import add_route_constraints
+    for option in options:
+        if len(option["path"])>2 and not option.get("intermediate_hub"):
+            option["label"]="Via "+" → ".join(net["nodes"][n]["name"] for n in option["path"][1:-1])+(" · clear detour" if option["avoidance_status"]=="CLEAR" else "")
+        option["capacity"]=evaluate_capacity(option,ctx,ldm)
+        add_route_constraints(option,net)
     from .reliability import arrival_evidence
     for option in options:option["arrival_evidence"]=arrival_evidence(ctx.get("capacity_shipments",[]),ctx.get("original_origin",origin),destination,option["eta"],ctx.get("skip_origin_handling",False))
     from .dispatch import connection_warnings
@@ -229,6 +238,7 @@ def review_options(ctx, ship):
     if remaining:ctx=position_context(ctx,ship)
     ctx={**ctx,"original_origin":ship["origin"]}
     origin=VEHICLE_NODE if remaining else ship["origin"]
+    destination=ship["destination"]
     path=ship["vehicle_position"]["remaining_path"] if remaining else ship["route"]
     args=(ctx,origin,ship["destination"],datetime.now(timezone.utc) if remaining else parse(ship["planned_departure"]),ship["weight_kg"],
           ship.get("required_delivery"),ship.get("value_eur",0),ship.get("optimization","fastest"),ship.get("truck"))
@@ -236,7 +246,16 @@ def review_options(ctx, ship):
     if reported_delay and parse(reported_delay["until"])>args[3]:
         minutes=max(0,round((parse(reported_delay["until"])-args[3]).total_seconds()/60))
         ctx["hub_delays"]={**ctx["hub_delays"],origin:{"minutes":minutes+ctx["hub_delays"].get(origin,{}).get("minutes",0),"reason":"Driver report: "+reported_delay["reason"]}}
-    options=plan(*args,required_paths=[path])
+    request=ship.get("manager_route_request")
+    requested_path=None
+    if request:
+        from .manager_routes import validate_path
+        requested_path=validate_path(ctx["network"],origin,destination,request["via_hubs"])
+        if request.get("depart_at") and not remaining:
+            args=(*args[:3],parse(request["depart_at"]),*args[4:])
+    options=plan(*args,required_paths=[path]+([requested_path] if requested_path else []))
+    if requested_path:
+        for option in options:option["manager_requested"]=option["path"]==requested_path
     current=next((o for o in options if o["path"]==path and o.get("avoidance_status")!="CLEAR"),None)
     departure=parse(ship["planned_departure"])
     if current and not ship.get("vehicle_position"):
@@ -339,9 +358,15 @@ class Shipments:
 
     def create(self, p):
         sid = "SHP-" + uuid.uuid4().hex[:6].upper()
+        if p.get("selected_path"):
+            from .manager_routes import validate_path
+            selected=p["selected_path"]
+            if len(selected)<2 or selected[0]!=p["origin"] or selected[-1]!=p["destination"]:
+                raise ValueError("Selected route must start at the shipment origin and end at its destination")
+            validate_path(self.ctx["network"],p["origin"],p["destination"],selected[1:-1])
         dep = datetime.fromisoformat(p["planned_departure"].replace("Z", "+00:00")).astimezone(timezone.utc)
         opts = plan(self.context_for(p), p["origin"], p["destination"], dep, p.get("weight_kg", 0),
-                    p.get("required_delivery"), p.get("value_eur", 0), p.get("optimization","fastest"),p.get("truck"))
+                    p.get("required_delivery"), p.get("value_eur", 0), p.get("optimization","fastest"),p.get("truck"),required_paths=[p["selected_path"]] if p.get("selected_path") else None)
         chosen = next((i for i,o in enumerate(opts) if o.get("route_id") == p.get("selected_route_id")), -1) if p.get("selected_route_id") else -1
         if chosen<0: chosen = next((i for i,o in enumerate(opts) if o["path"] == p.get("selected_path")), 0)
         if p.get("selected_route_id") and opts[chosen].get("route_id") != p["selected_route_id"]: raise ValueError("Selected road detour is no longer available. Recalculate first.")
@@ -380,6 +405,7 @@ class Shipments:
             position_context(self.context_for(s),s)
         if not 0 <= option_index < len(s["options"]): raise ValueError("Invalid route option")
         opt = s["options"][option_index]
+        if not opt.get("route_feasible",True):raise ValueError("; ".join(opt.get("unavailable_reasons",[])) or "Requested road connection is unavailable")
         if moving and opt.get("position_id")!=s["vehicle_position"]["id"]:raise ValueError("Vehicle position changed. Recalculate remaining route before approval")
         if not opt.get("capacity",{}).get("feasible",True):raise ValueError("Insufficient hub or service capacity. Choose another option or wait")
         if opt.get("avoidance_status") in {"IMPACTED", "NO_CLEAR_DETOUR"}:
@@ -435,6 +461,8 @@ class Shipments:
         s["capacity_reservations"]=reservations(approved)
         s.setdefault("approval_history",[]).append({"quote_id":previous_plan.get("quote_id"),"path":previous_plan.get("path"),"eta":previous_plan.get("eta"),"at":s.get("approved_at"),"reason":s.get("approval_reason")})
         s.pop("hold",None)
+        request=s.pop("manager_route_request",None)
+        if request and request.get("depart_at") and not moving:s["planned_departure"]=approved["depart_at"]
         if moving:s.pop("stop_request",None)
         s.update({"status": "IN TRANSIT" if moving else "SCHEDULED", "approval_reason":decision_reason, "scheduled_departure": s.get("scheduled_departure") if moving else next((step["start"] for step in approved["steps"] if step["type"]=="drive"),s["planned_departure"]),
                   "route": approved["path"], "current_eta": approved["eta"],
@@ -573,13 +601,13 @@ class Shipments:
         for ship in self.data.values():
             if _advance_time_status(ship):
                 changed = True
-        if changed:
+        if changed and (not persistence.configured() or persistence.writing()):
             _save(self.data)
         return sorted(self.data.values(), key=lambda x: x["created_at"], reverse=True)
 
     def get(self, sid):
         ship = self.data.get(sid)
-        if ship and _advance_time_status(ship):
+        if ship and _advance_time_status(ship) and (not persistence.configured() or persistence.writing()):
             _save(self.data)
         return ship
 

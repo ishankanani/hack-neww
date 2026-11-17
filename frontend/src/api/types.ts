@@ -17,6 +17,7 @@ export interface Incident { id:string; geometry:{type:string;coordinates: number
 export interface MapConditions { weather:LiveWeather[]; incidents:{status:string;items:Incident[];fetched_at?:string}; traffic_configured:boolean; at:string; fetched_at:string; }
 export interface TruckProfile { height_m:number; width_m:number; length_m:number; gross_weight_kg:number; }
 export interface RouteOption {
+  route_feasible?:boolean;unavailable_reasons?:string[];manager_requested?:boolean;
   arrival_evidence?:ArrivalEvidence;
   capacity?:CapacityEvidence;
   remaining_only?:boolean;position_id?:string;vehicle_start?:{lat:number;lon:number;reported_at:string;source:string};completed_geometry?:number[][];completed_estimates?:OptCost;remaining_cost?:OptCost;
@@ -43,6 +44,8 @@ export interface RouteResp { revision?: number; options: RouteOption[]; recommen
 export interface JourneyExample { id:string; title:string; description:string; weather_zone_count:number; request:{origin:string;destination:string;depart_at:string;required_delivery:string;weight_kg:number;value_eur:number;optimization:string}; }
 
 export interface Shipment {
+  selected_option?:number;
+  manager_route_request?:{via_hubs:string[];path:string[];depart_at:string|null;requested_at:string;source:string};
   simulation_used?:boolean;
   actual_departure?:string;driver_updates?:{kind:string;reported_at:string;at?:string;source:string;reference?:string;minutes?:number}[];reported_delay?:{minutes:number;reason:string;at:string;until:string;source:string};
   vehicle_position?:VehiclePosition;movement_started_at?:string;stop_request?:{status:"REQUESTED"|"ACKNOWLEDGED";reason:string;at:string;reference?:string};

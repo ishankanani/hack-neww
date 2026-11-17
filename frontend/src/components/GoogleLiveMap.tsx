@@ -11,6 +11,7 @@ import type { WeatherMapSurface } from "./WeatherMapSurface";
 import { MapWeatherSimulation } from "./MapWeatherSimulation";
 import { routePointForIncident, alternativeColor, alternativeLabelPoint } from "./mapRouteGeometry";
 import { TRUCK_GLYPH } from "./truckGlyph";
+import { RouteWeatherReadout } from "./RouteWeatherReadout";
 import "../google-maps.css";
 
 const EMPTY: never[] = [];
@@ -22,7 +23,7 @@ function information(title: string, lines: string[]) {
 }
 
 export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY, comparisonGeometry,
-  alternatives = EMPTY, onSelect, routeWeather = EMPTY, trafficSections = EMPTY, sim, demo = false,
+  alternatives = EMPTY, showAlternatives = false, onSelect, routeWeather = EMPTY, trafficSections = EMPTY, sim, demo = false,
   weatherZones = EMPTY, plannedStart, plannedEnd, avoidanceStatus, onAddWeatherZone, onUpdateWeatherZone,
   onDeleteWeatherZone, onCancelWeatherZones, onRefresh, onFallback,
 }: LiveMapProps & { onFallback: () => void }) {
@@ -83,10 +84,10 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
     const native = map.current, maps = sdk.current;
     if (!native || !maps || planned.length < 2) return;
     const bounds = new maps.LatLngBounds();
-    [planned, ...alternatives.flatMap(o => o.geometry?.length ? [o.geometry] : [])].forEach(road => googlePath(road).forEach(point => bounds.extend(point)));
+    [planned, ...(showAlternatives ? alternatives : EMPTY).flatMap(o => o.geometry?.length ? [o.geometry] : [])].forEach(road => googlePath(road).forEach(point => bounds.extend(point)));
     native.fitBounds(bounds, 42);
     maps.event.addListenerOnce(native, "idle", () => { if ((native.getZoom() ?? 5) > 10) native.setZoom(10); });
-  }, [planned, alternatives]);
+  }, [planned, alternatives, showAlternatives]);
   useEffect(() => {
     if (ready && container.current?.clientWidth && lastFit.current !== cameraKey) { lastFit.current = cameraKey; fit(); }
   }, [ready, cameraKey, fit, layout]);
@@ -118,7 +119,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
       lines.push(item); return item;
     }
     line(completedGeometry, "#7f8a92", 5, .7, 2);
-    alternatives.forEach((option, i) => {
+    (showAlternatives ? alternatives : EMPTY).forEach((option, i) => {
       if (!option.geometry?.length || JSON.stringify(option.geometry) === roadKey) return;
       line(option.geometry, "#ffffff", 13, .9, 2);
       const color = alternativeColor(i);
@@ -145,7 +146,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
     });
     if (sim?.ghostCoords) line(sim.ghostCoords, "#82909c", 4, .75, 5, true);
     return () => { lines.forEach(item => { maps.event.clearInstanceListeners(item); item.setMap(null); }); labels.forEach(marker => { marker.map = null; }); };
-  }, [ready, roadKey, coords, alternatives, completedGeometry, comparisonGeometry, trafficSections, traffic, offset, sim?.ghostCoords]);
+  }, [ready, roadKey, coords, alternatives, showAlternatives, completedGeometry, comparisonGeometry, trafficSections, traffic, offset, sim?.ghostCoords]);
 
   // Facility, forecast and route-only incident markers use Google's native marker API.
   useEffect(() => {
@@ -216,23 +217,32 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   }, [ready, sim?.blockage]);
 
   return <div className="live-map-shell google-live-map" ref={shell}>
-    <div className="live-controls"><div className="layer-toggles">
-      <span className="google-provider-label">Google Maps</span>
-      <button aria-pressed={weather} disabled={demo} onClick={() => setWeather(v => !v)}><CloudSun size={13} />Weather</button>
-      <button aria-pressed={traffic} disabled={demo} onClick={() => setTraffic(v => !v)}><Car size={13} />Traffic</button>
-      <details className="map-settings"><summary>Map settings</summary><div className="map-settings-menu">
+    <section className="organized-map-controls" aria-label="Map display and conditions">
+      <div className="organized-map-heading">
+        <div className="organized-map-title"><strong>Google Maps</strong><div className="organized-layer-toggles">
+          <button aria-pressed={weather} disabled={demo} onClick={() => setWeather(v => !v)}><CloudSun size={13}/>Weather</button>
+          <button aria-pressed={traffic} disabled={demo} onClick={() => setTraffic(v => !v)}><Car size={13}/>Traffic</button>
+        </div></div>
+        <div className="organized-map-actions">
+          <button aria-label="Fit route" title="Fit selected route" onClick={fit}><LocateFixed size={15}/></button>
+          <button aria-label="Fullscreen map" title="Fullscreen map" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void shell.current?.requestFullscreen().catch(() => setError("Fullscreen is unavailable in this browser.")); }}><Expand size={15}/></button>
+          <button disabled={loading || demo} aria-label="Refresh live conditions and ETA" title="Refresh conditions and estimates" onClick={() => { setTick(t => t + 1); onRefresh?.(); }}><RefreshCw size={15} className={loading ? "spin" : ""}/></button>
+        </div>
+      </div>
+      <div className="organized-map-fields">
         <label>Map style<select aria-label="Google map style" value={mapType} onChange={e => setMapType(e.target.value)}><option value="roadmap">Road map</option><option value="satellite">Satellite</option><option value="hybrid">Satellite with labels</option><option value="terrain">Terrain</option></select></label>
-        <button aria-pressed={hubs} onClick={() => setHubs(v => !v)}>Facilities</button><button aria-pressed={incidents} onClick={() => setIncidents(v => !v)}>Route incidents</button>
-      </div></details>
-    </div><div className="map-actions"><button aria-label="Fit route" onClick={fit}><LocateFixed size={15} /></button><button aria-label="Fullscreen map" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void shell.current?.requestFullscreen().catch(() => setError("Fullscreen is unavailable in this browser.")); }}><Expand size={15} /></button><button disabled={loading || demo} aria-label="Refresh live conditions and ETA" onClick={() => { setTick(t => t + 1); onRefresh?.(); }}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div></div>
-    <div className="forecast-controls"><label>Weather preview<select aria-label="Weather forecast time" disabled={demo} value={offset} onChange={e => setOffset(Number(e.target.value))}><option value={-1}>At planned passage</option><option value={0}>Now</option><option value={3}>In 3 hours</option><option value={6}>In 6 hours</option><option value={12}>In 12 hours</option></select></label><span>{loading ? "Fetching conditions…" : data ? `Updated ${dt(data.fetched_at)}` : "Route forecasts"}<small>{demo ? "Recorded demo journey" : offset > 0 ? "Future weather · traffic hidden" : `Traffic ${data?.traffic_configured ? "live" : "simulated"} · weather forecast`}</small></span></div>
+        <label>Forecast time<select aria-label="Weather forecast time" disabled={demo} value={offset} onChange={e => setOffset(Number(e.target.value))}><option value={-1}>At planned passage</option><option value={0}>Now</option><option value={3}>In 3 hours</option><option value={6}>In 6 hours</option><option value={12}>In 12 hours</option></select></label>
+        <div className="organized-map-switches"><button aria-pressed={hubs} onClick={() => setHubs(v => !v)}>Facilities</button><button aria-pressed={incidents} onClick={() => setIncidents(v => !v)}>Route incidents</button></div>
+      </div>
+      <div className="organized-map-status"><span><i/>{demo ? "Recorded demo" : offset > 0 ? "Future weather · traffic hidden" : data?.incidents.status === "ERROR" ? "Traffic feed unavailable" : data?.traffic_configured ? "Traffic feed connected" : "Traffic simulation"}</span><span>{loading ? "Updating conditions…" : data ? `Updated ${dt(data.fetched_at)}` : "Route forecasts"}</span></div>
+    </section>
     {error && <div className="map-note" role="alert">{error} <button className="linkbtn" onClick={onFallback}>Use backup map</button></div>}
     {conditionsError && <div className="map-note" role="alert">Weather and traffic could not refresh: {conditionsError}</div>}
     <MapWeatherSimulation mapRef={unusedMapLibre} mapContainerRef={container} surface={surface} ready={ready} styleVersion={0} fallback={!ready} demo={demo} routeCoords={planned} weatherZones={weatherZones} plannedStart={plannedStart} plannedEnd={plannedEnd} avoidanceStatus={avoidanceStatus} onAddWeatherZone={onAddWeatherZone} onUpdateWeatherZone={onUpdateWeatherZone} onDeleteWeatherZone={onDeleteWeatherZone} onCancelWeatherZones={onCancelWeatherZones}>
       <div ref={container} className="google-map-canvas" aria-label="Google Maps journey map" />
       {!ready && !error && <div className="google-map-loading" role="status">Loading Google Maps…</div>}
     </MapWeatherSimulation>
-    <div className="map-legend"><span><i style={{ background: "#17765e" }} />Selected route</span>{alternatives.map((option,i) => option.geometry?.length && JSON.stringify(option.geometry)!==roadKey ? <button key={option.route_id ?? i} onClick={()=>choose.current?.(i)} aria-label={`View route option ${i+1}`}><i style={{background:alternativeColor(i)}}/>Option {i+1}</button> : null)}<span><i style={{ background: "#de7043" }} />Traffic on route</span>{weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} />Simulated weather</span>}{!!completedGeometry.length && <span>Grey · completed road</span>}</div>
-    <details className="weather-readout"><summary>Weather along the route · {forecasts.filter(w => w.status === "FORECAST").length} forecast samples</summary>{forecasts.map((w, i) => <div key={`${w.id}-${i}`}><span>{w.condition ?? w.status} · {w.temperature_c ?? "—"}°C</span><span>{dt(w.valid_at)} · wind {w.wind_kmh ?? "—"} km/h</span></div>)}</details>
+    <div className="map-legend"><span><i style={{ background: "#17765e" }} />Selected route</span>{showAlternatives && alternatives.map((option,i) => option.geometry?.length && JSON.stringify(option.geometry)!==roadKey ? <button key={option.route_id ?? i} onClick={()=>choose.current?.(i)} aria-label={`View route option ${i+1}`}><i style={{background:alternativeColor(i)}}/>Option {i+1}</button> : null)}<span><i style={{ background: "#de7043" }} />Traffic on route</span>{weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} />Simulated weather</span>}{!!completedGeometry.length && <span>Grey · completed road</span>}</div>
+    <RouteWeatherReadout forecasts={forecasts}/>
   </div>;
 }

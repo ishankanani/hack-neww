@@ -1,11 +1,12 @@
 import type { Service, Performance, NetworkDoc, Hub, Provider, Holiday, AuditEvent, RouteResp, Shipment, Dashboard, SavingsResp, RerouteResp, HighValue, RelationStat, Disruption, OperationalDelay, MapConditions, TruckProfile, Operations, WeatherInput, WeatherRecord, WeatherZoneInput, WeatherZone, ScenarioEvent, Decision } from "./types";
 export const BASE = import.meta.env.VITE_API_BASE ?? "/api";
 async function req<T>(p: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${BASE}${p}`, { headers: { "Content-Type": "application/json" }, ...init });
+  const r = await fetch(`${BASE}${p}`, { cache:"no-store", headers: { "Content-Type": "application/json" }, ...init });
   if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail ?? d; } catch { /* */ } throw new Error(Array.isArray(d)?d.map(x=>x.msg??String(x)).join("; "):String(d)); }
   return r.json() as Promise<T>;
 }
 export const api = {
+  proposeRoute:(id:string,body:{via_hubs:string[];depart_at?:string})=>req<Shipment>(`/shipments/${id}/route-proposal`,{method:"POST",body:JSON.stringify(body)}),
   journeyExamples:()=>req<{examples:import("./types").JourneyExample[]}>("/journey-examples"),
   driverUpdate:(id:string,body:{kind:"departed"|"delay"|"safe_stop"|"arrived";at?:string;reference?:string;minutes?:number;actual_cost_eur?:number})=>req<Shipment>(`/shipments/${id}/driver-update`,{method:"POST",body:JSON.stringify(body)}),
   capacity:()=>req<{records:import("./types").CapacityRecord[]}>("/capacity"),
@@ -45,7 +46,7 @@ export const api = {
   highValue: () => req<{ shipments: HighValue[] }>("/high-value"),
   relations: () => req<{ relations: RelationStat[] }>("/analytics/relations"),
   disruptions: () => req<{ active_operational: unknown[]; historical: Disruption[] }>("/disruptions"),
-  route: (body: { origin: string; destination: string; depart_at?: string; weight_kg?: number; required_delivery?: string; value_eur?: number; optimization?:string; truck?:TruckProfile; sample_id?:string; sample_weather?:boolean }) =>
+  route: (body: { origin: string; destination: string; depart_at?: string; weight_kg?: number; required_delivery?: string; value_eur?: number; optimization?:string; truck?:TruckProfile; sample_id?:string; sample_weather?:boolean;via_hubs?:string[] }) =>
     req<RouteResp>("/route", { method: "POST", body: JSON.stringify(body) }),
   shipments: (q = "") => req<{ shipments: Shipment[] }>(`/shipments${q}`),
   shipment: (id: string) => req<Shipment>(`/shipments/${id}`),

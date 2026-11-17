@@ -35,3 +35,4 @@ data/hosted_snapshot.json.gz
 data/hosted_snapshot.manifest.json
 .env.*.local
 .vercel
+.env*

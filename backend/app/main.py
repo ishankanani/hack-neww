@@ -35,6 +35,7 @@ from . import savings as savings_engine
 from .dispatch import attention, action_comparison, approvable
 from .simulate import reroute as simulate_reroute
 from .map_tiles import router as map_tiles_router
+from . import persistence
 
 from pathlib import Path
 DATA_DIR = os.environ.get("DATA_DIR", str(Path(__file__).resolve().parents[2] / "data" / "raw"))
@@ -88,17 +89,46 @@ app = FastAPI(title="DACHSER Live Transit Planner", version="3.0.0", lifespan=li
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(map_tiles_router)
 
+@app.middleware("http")
+async def fresh_api_responses(request,call_next):
+    if persistence.configured() and (request.method=="GET" or request.url.path=="/api/route"):
+        from starlette.concurrency import run_in_threadpool
+        try:await run_in_threadpool(refresh_shared_state)
+        except persistence.StorageUnavailable as exc:
+            return JSONResponse(status_code=503,content={"detail":str(exc)},headers={"Cache-Control":"no-store"})
+    response=await call_next(request)
+    if request.url.path.startswith("/api/"):response.headers["Cache-Control"]="no-store"
+    return response
+
+
+def refresh_shared_state():
+    if not persistence.configured() or "ships" not in S:return
+    with LOCK,persistence.session():
+        ops=persistence.load("operations.json",S["operations"].data)
+        ships=persistence.load("shipments.json",S["ships"].data)
+        if ops is not None:
+            S["operations"].data=ops
+            S["hub_delays"]=ops.setdefault("hub_delays",{})
+            S["ships"].ctx["hub_delays"]=S["hub_delays"]
+        if ships is not None:S["ships"].data=ships
+
 
 def serialized(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
-        with LOCK:
+        with LOCK,persistence.session(write=True):
+            refresh_shared_state()
             return fn(*args, **kwargs)
     return wrapped
 
 @app.exception_handler(ValueError)
 async def invalid_request(request, exc):
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(persistence.StorageUnavailable)
+async def unavailable_storage(request,exc):
+    return JSONResponse(status_code=503,content={"detail":str(exc)})
 
 class TruckReq(BaseModel):
     # Broad prototype sanity limits; these are routing-input limits, not a claim
@@ -109,6 +139,7 @@ class TruckReq(BaseModel):
     gross_weight_kg: float = Field(default=40000, ge=1000, le=50000)
 
 class RouteReq(BaseModel):
+    via_hubs: list[str] = Field(default_factory=list,max_length=6)
     sample_id: Optional[str] = None
     sample_weather: bool = False
     optimization: Literal["fastest","cost","balanced"] = "fastest"
@@ -239,6 +270,8 @@ def route(req: RouteReq):
         raise HTTPException(422, "origin equals destination")
     if req.weight_kg > req.truck.gross_weight_kg: raise ValueError("Gross vehicle weight must include the cargo")
     depart = _parse(req.depart_at) if req.depart_at else datetime.now(timezone.utc)
+    from .manager_routes import validate_path
+    requested_path=validate_path(net,req.origin,req.destination,req.via_hubs) if req.via_hubs else None
     # Routing waits on remote providers. Keep fleet/scenario polling responsive
     # and give every candidate the same operational revision throughout a search.
     with LOCK:
@@ -253,13 +286,15 @@ def route(req: RouteReq):
         from .journey_examples import example, isolated_context
         sample=example(req.sample_id);context=isolated_context(context)
     args=(req.origin,req.destination,depart,req.weight_kg,req.required_delivery.isoformat() if req.required_delivery else None,req.value_eur,req.optimization,req.truck.model_dump())
-    options=plan_options(context,*args)
+    options=plan_options(context,*args,required_paths=[requested_path] if requested_path else None)
     if sample and req.sample_weather:
         from .journey_examples import weather_for
         baseline=next((o for o in options if len(o["path"])==2),options[0])
         zones=weather_for(sample,baseline.get("geometry"),depart)
         context["operations"].data["weather_zones"]=zones
-        options=plan_options(context,*args)
+        options=plan_options(context,*args,required_paths=[requested_path] if requested_path else None)
+    if requested_path:
+        for option in options:option["manager_requested"]=option["path"]==requested_path
 
     savings = savings_vs_baseline(options[0], options[1]) if len(options) > 1 and options[0].get("avoidance_status") in {"NO_ZONE", "CLEAR"} else None
     wx = []  # Manual/sample records are evaluated by the same weather alert engine.
@@ -579,6 +614,20 @@ def replan_shipment(sid: str, from_now:bool=False):
     with LOCK:
         s=S["ships"].replan(sid,from_now=from_now)
         return {**s,"dispatch_actions":action_comparison(s)}
+
+
+class ManagerRouteReq(BaseModel):
+    via_hubs: list[str] = Field(default_factory=list,max_length=6)
+    depart_at: Optional[AwareDatetime] = None
+
+
+@app.post("/api/shipments/{sid}/route-proposal")
+@serialized
+def manager_route_proposal(sid:str, req:ManagerRouteReq):
+    from .manager_routes import propose
+    s=propose(S["ships"],sid,req.via_hubs,req.depart_at.isoformat() if req.depart_at else None)
+    _audit("manager_route_proposed",f"{sid}: "+" → ".join(s["manager_route_request"]["path"]),"MANAGER INPUT")
+    return {**s,"dispatch_actions":action_comparison(s)}
 
 
 class PositionReq(BaseModel):

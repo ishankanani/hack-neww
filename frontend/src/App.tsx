@@ -2,7 +2,7 @@ import "./dispatch.css";
 import { useEffect, useRef, useState } from "react";
 import { Truck, Route, PiggyBank, BarChart3, RefreshCw, ShieldCheck, CloudSun, BookOpen, ArrowUpRight, Activity } from "lucide-react";
 import { api } from "./api/client";
-import type { NetworkDoc, Provider, Operations } from "./api/types";
+import type { NetworkDoc, Provider, Operations, Shipment } from "./api/types";
 import { statusClass } from "./lib";
 import { Shipments } from "./views/Shipments";
 import { Planner } from "./views/Planner";
@@ -27,6 +27,8 @@ export default function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [ops, setOps] = useState<Operations | null>(null);
   const [tick, setTick] = useState(0);
+  const [savedJourney,setSavedJourney]=useState<Shipment|null>(null);
+  const saved=(shipment:Shipment)=>{setSavedJourney(shipment);setTick(value=>value+1)};
   const [err, setErr] = useState("");
   const moreMenu = useRef<HTMLDetailsElement>(null);
 
@@ -108,11 +110,11 @@ export default function App() {
 
         <div style={{ display: tab === "planner" ? "block" : "none" }}>
           {visited.has("planner") && (
-            <Planner nodes={nodes} revision={ops?.revision ?? 0} onChange={refresh} onReview={() => selectTab("control")} />
+            <Planner nodes={nodes} revision={ops?.revision ?? 0} onSaved={saved} onChange={refresh} onReview={() => selectTab("control")} />
           )}
         </div>
         <div style={{ display: tab === "control" ? "block" : "none" }}>
-          {visited.has("control") && <ControlRoom nodes={nodes} onChange={refresh} />}
+          {visited.has("control") && <ControlRoom nodes={nodes} onChange={refresh} refreshKey={tick} active={tab==="control"} savedJourney={savedJourney} onSaved={saved} />}
         </div>
         <div style={{ display: tab === "shipments" ? "block" : "none" }}>
           {visited.has("shipments") && <Shipments nodes={nodes} />}

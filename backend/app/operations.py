@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
+from . import persistence
 
 LOCK = RLock()
 def parse(value):
@@ -20,7 +21,9 @@ class Operations:
         self.data.setdefault("schedules", [])
         self.data.setdefault("weather_zones", [])
         self.data.setdefault("capacity_records", [])
+        if persistence.configured():self.data=persistence.load(persistence.document_key(self.path),self.data,force=True)
     def save(self):
+        if persistence.save(persistence.document_key(self.path),self.data):return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
