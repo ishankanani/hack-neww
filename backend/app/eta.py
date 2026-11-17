@@ -2,7 +2,7 @@
 import math
 from datetime import timedelta
 from .restrictions import drive_with_restrictions
-from .weekend import hub_release
+from .weekend import hub_release, leg_start, HOLD_TEXT as WEEKEND_HOLD_TEXT
 from .weather_rules import at_hub
 from .operations import parse
 from .live import DEFAULT_TRUCK
@@ -30,7 +30,7 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
         comp["transfer"]+=h; cur+=timedelta(minutes=h)
         release=hub_release(arrival,cur,intermediate=i>0)
         if release>cur:
-            add("weekend_hold",a,cur,release,"Weekend Hold · Sunday — no movement. Next eligible movement: Monday; calendar restrictions still apply.","BUSINESS POLICY")
+            add("weekend_hold",a,cur,release,WEEKEND_HOLD_TEXT,"BUSINESS POLICY")
             comp["weekend_hold"]+=round((release-cur).total_seconds()/60); cur=release
         hd=hub_delays.get(a)
         if hd and hd.get("minutes",0)>0:
@@ -165,6 +165,12 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
                                 "source": "Scenario Studio (simulated)"
                             })
         comp["traffic"]+=traffic
+        # Business weekend rule: the whole leg, including delivery, must avoid Sat 15:00 – Mon 05:00.
+        # The truck waits at this hub rather than stopping on the road.
+        leave=leg_start(cur,lambda t:drive_with_restrictions(t,drive+traffic,holidays)["arrival"])
+        if leave>cur:
+            add("weekend_hold",a,cur,leave,WEEKEND_HOLD_TEXT,"BUSINESS POLICY")
+            comp["weekend_hold"]+=round((leave-cur).total_seconds()/60); cur=leave; departure=leave
         leg=drive_with_restrictions(cur,drive+traffic,holidays)
         final_hits=crossed_zones(road.get("geometry"),active_zones(operations,cur,leg["arrival"]),CLEARANCE_KM)
         if final_hits:

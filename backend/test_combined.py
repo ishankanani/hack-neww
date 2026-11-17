@@ -24,10 +24,19 @@ class Providers:
     def __init__(self,*args): self.routing=Road(); self.traffic=Traffic()
     def all(self): return []
 
-def test_saturday_arrival_waits_until_monday():
-    arrival=dt("2026-09-19T12:00:00+02:00")
-    release=hub_release(arrival,arrival+timedelta(hours=2))
-    assert release.astimezone(BERLIN).isoformat()=="2026-09-21T00:00:00+02:00"
+def test_weekend_window_is_saturday_15_to_monday_05():
+    from app.weekend import leg_start
+    # Ready on Saturday before 15:00: may leave only if the whole leg ends before 15:00.
+    ready=dt("2026-09-19T12:00:00+02:00")
+    assert hub_release(ready,ready)==ready
+    assert leg_start(ready,lambda t:t+timedelta(hours=2))==ready
+    assert leg_start(ready,lambda t:t+timedelta(hours=4)).astimezone(BERLIN).isoformat()=="2026-09-21T05:00:00+02:00"
+    # Ready inside the window (Saturday 16:00, Sunday, Monday 04:00): waits at the hub until Monday 05:00.
+    for inside in ("2026-09-19T16:00:00+02:00","2026-09-20T10:00:00+02:00","2026-09-21T04:30:00+02:00"):
+        assert hub_release(dt(inside),dt(inside)).astimezone(BERLIN).isoformat()=="2026-09-21T05:00:00+02:00"
+    # Monday 05:00 onwards is free again.
+    monday=dt("2026-09-21T05:00:00+02:00")
+    assert hub_release(monday,monday)==monday
 
 def test_sunday_22_is_still_held_by_business_policy():
     journey=drive_with_restrictions(dt("2026-09-20T22:30:00+02:00"),60,{})
@@ -47,13 +56,23 @@ def test_sunday_dst_length():
     assert result["arrival"].astimezone(BERLIN).hour==1
 
 def test_dynamic_hub_relevance_availability_and_destination_priority():
-    nodes=[{"id":i,"name":i,"lat":49.,"lon":lon} for i,lon in [("A",8),("B",9.8),("C",9.2),("D",10)]]
+    # A -> D is about 440 km. E sits next to the destination (under 3 h away) and must be skipped.
+    nodes=[{"id":i,"name":i,"lat":49.,"lon":lon} for i,lon in [("A",8),("B",10.5),("C",10.0),("E",13.4),("D",14)]]
     nodes.append({"id":"HN","name":"Heilbronn","lat":52.,"lon":8.})
-    road=Road(); base=road.leg((49,8),(49,10))
-    hubs=select_hubs(nodes[0],nodes[3],nodes,base,road,{})
-    assert hubs[0]["hub"]=="B" and "HN" not in [h["hub"] for h in hubs]
-    assert select_hubs(nodes[0],nodes[3],nodes,base,road,{"blocked":{"B"}})[0]["hub"]=="C"
-    assert select_hubs(nodes[0],nodes[3],nodes,{"geometry":None},road,{})==[]
+    road=Road(); base=road.leg((49,8),(49,14))
+    hubs=select_hubs(nodes[0],nodes[4],nodes,base,road,{})
+    ids=[h["hub"] for h in hubs]
+    assert ids[0]=="B" and "HN" not in ids and "E" not in ids
+    assert all(h["distance_to_destination_km"]/65*60>=180 for h in hubs)
+    assert select_hubs(nodes[0],nodes[4],nodes,base,road,{"blocked":{"B"}})[0]["hub"]=="C"
+    assert select_hubs(nodes[0],nodes[4],nodes,{"geometry":None},road,{})==[]
+
+def test_detours_must_stay_inside_germany():
+    from app.germany import leaves_germany, outside_km
+    from app.data import COORDS
+    assert all(outside_km(lon,lat)==0 for lat,lon in COORDS.values())
+    assert not leaves_germany([[8.40,49.01],[11.08,49.45],[13.74,51.05]])        # Karlsruhe - Nuernberg - Dresden
+    assert leaves_germany([[11.08,49.45],[13.38,49.75],[14.42,50.08],[13.74,51.05]])  # via Pilsen and Prague
 
 def test_weekend_timeline_and_weather_scope(tmp_path,monkeypatch):
     monkeypatch.setenv("STORE_DIR",str(tmp_path)); ops=Operations()
@@ -64,7 +83,13 @@ def test_weekend_timeline_and_weather_scope(tmp_path,monkeypatch):
     j=compute_journey(net,{}, {},{},Providers(),"A","C",dt("2026-09-19T06:00:00+00:00"),["A","B","C"],ops)
     assert j["components"]["weather"]==120
     hold=next(s for s in j["steps"] if s["type"]=="weekend_hold")
-    assert hold["location"]=="B" and dt(hold["end"]).astimezone(BERLIN).weekday()==0
+    end=dt(hold["end"]).astimezone(BERLIN)
+    assert hold["location"] in {"A","B"} and end.weekday()==0 and end.hour==5   # waits at a hub until Monday 05:00
+    for s in j["steps"]:
+        if s["type"]=="drive":
+            start,stop=dt(s["start"]).astimezone(BERLIN),dt(s["end"]).astimezone(BERLIN)
+            assert not (start.weekday()==5 and stop.hour>=15) and start.weekday()!=6   # nothing moves Sat 15:00 - Mon 05:00
+    assert all(s["type"]!="legal_wait" for s in j["steps"])  # never parked on the road
     assert all(dt(s["start"]).astimezone(BERLIN).weekday()!=6 for s in j["steps"] if s["type"]=="drive")
     assert sum(s["minutes"] for s in j["steps"])==j["total_minutes"]
     later=compute_journey(net,{}, {},{},Providers(),"A","C",dt("2026-09-22T06:00:00+00:00"),["A","C"],ops)

@@ -3,6 +3,10 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 from .eta import _haversine_km
 
+# An intermediate transfer this close to the destination only adds hub time.
+HUB_MIN_REMAINING_MINUTES = 180
+AVERAGE_TRUCK_KMH = 65
+
 def ll(n): return (n["lat"], n["lon"])
 
 def corridor_distance(n, geometry):
@@ -27,12 +31,16 @@ def select_hubs(origin, destination, available_hubs, existing_route, routing, co
         if not n.get("transfer_enabled", True) or constraints.get("ldm",0) > n.get("capacity_ldm", 13.6): continue
         remaining = _haversine_km(ll(n), ll(destination))
         if remaining < 8 or corridor_distance(n, existing_route["geometry"]) > constraints.get("corridor_km", 35): continue
+        # Straight-line pre-check (road distance is at least this long); the road check follows below.
+        if remaining / AVERAGE_TRUCK_KMH * 60 < HUB_MIN_REMAINING_MINUTES * 0.6: continue
         candidates.append((remaining, n))
     candidates.sort(key=lambda x:x[0])
     def verify(item):
         _, n = item
         left = routing.leg(ll(origin), ll(n)); right = routing.leg(ll(n), ll(destination))
         if not left.get("geometry") or not right.get("geometry"): return None
+        remaining_minutes = max(right.get("duration_minutes", 0), right["distance_km"] / AVERAGE_TRUCK_KMH * 60)
+        if remaining_minutes < HUB_MIN_REMAINING_MINUTES: return None
         detour = left["distance_km"] + right["distance_km"] - baseline
         if detour > min(100, max(15, baseline*constraints.get("max_detour_ratio", .25))): return None
         return {"hub": n["id"], "name": n["name"], "reason": "Operational transfer facility near the road route; ranked by distance to destination after detour and capacity checks.",

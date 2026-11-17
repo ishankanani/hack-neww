@@ -6,6 +6,8 @@ from datetime import timedelta
 
 from .operations import parse
 
+from .germany import leaves_germany, outside_km
+
 IMPACT_MINUTES = {"snow": 110, "rain": 65, "tornado": 180}
 CLEARANCE_KM = 2.0
 LOCAL_BUFFER_KM = 8.0
@@ -234,6 +236,8 @@ def closest_clear_detour(providers, a, b, original, zones, depart, truck):
             if detour.get("distance_km",0)<=0 or detour.get("duration_minutes",0)<=0:return None
             combined=_join_lines(prefix,line,suffix)
             if crossed_zones(combined,zones,CLEARANCE_KM):return None
+            # Detours must stay in Germany; a road through a neighbouring country is not offered.
+            if leaves_germany(line):return None
             extra_km=detour["distance_km"]-old_km
             sections=retained_sections+detour.get("traffic_sections",[])
             info={"original_segment":segment,"detour_segment":line,
@@ -257,7 +261,8 @@ def closest_clear_detour(providers, a, b, original, zones, depart, truck):
         # Test both sides, then wider waypoints on the next pass. Prefer truck
         # routing when configured; use OSRM only when that request is unavailable.
         waypoints=[via for side in (1,-1)
-                   if (via:=_corridor_waypoints(start,end,zones,side,extra))]
+                   if (via:=_corridor_waypoints(start,end,zones,side,extra))
+                   and not any(outside_km(p[1],p[0])>10 for p in via)]
         def route(via):
             road=tomtom.route_via(local_a,local_b,via,local_depart,truck,avoid_areas=zones) if tomtom and tomtom.key else None
             checked=verify(road)
