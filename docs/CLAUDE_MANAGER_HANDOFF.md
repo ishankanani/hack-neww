@@ -6,9 +6,36 @@ Checkpoint branch: `codex/manager-control-room-2026-11-17`
 
 Local project: `C:\Users\acer\Documents\ChatGPT\hackathon project\Dachser Company Project 30-09 Final`
 
-The user explicitly stopped implementation and requested a commit and handoff.
-This is work in progress. The checkpoint has not been merged into main or deployed
-to production. Finish the acceptance work below before calling it complete.
+The user originally stopped implementation and requested this handoff. Claude's
+acceptance commits have since been reviewed and merged into the checkpoint.
+The local follow-up below records the subsequent fixes and release checks.
+
+## Local follow-up, 17 Nov 2026 (Codex)
+
+- Confirmed the canonical website was still serving main `7ea0a89`; the manager
+  checkpoint only had preview deployments. Publishing this source to main is
+  required for the public website to show the rebuilt control room and Postgres.
+- Each saved home journey now has its own Review button. An explicit review
+  request opens that ID, including repeated visits to the same journey, after
+  any ongoing manager operation finishes. Opening a queue item shows its saved
+  itinerary; Recalculate is an explicit action.
+- Manager forms disable edits during a request. Changes to hubs/departure are
+  marked as uncalculated and block approval until the new connection is evaluated.
+  Corrected the initial Würzburg fallback, explained direct manager connections,
+  and reset the old affected-road overlay when changing the selected road.
+- Real browser/local backend/Neon/OSRM/Google Maps workflow: selected the Chemnitz
+  alternative for Würzburg to Dresden, saved `SHP-136D0F`, and opened that exact
+  journey with the same alternative selected in the control room. Added Nürnberg,
+  moved it ahead of Chemnitz and calculated the requested sequence. The saved
+  itinerary remained unchanged until approval. Approval changed the stored route,
+  showed success, closed the review and moved the journey into Active.
+- The unwanted driver-update link and Vehicle progress panel are absent. Planned,
+  Review required and Active queues and saved/proposed metrics were inspected.
+- Focused manager/alternative/progress checks: 13 passed. Frontend production
+  build passed. No broad test suite was run.
+- The earlier datetime fill issue reproduced in the in-app automation: the DOM
+  value changed but React retained the prior date after blur. This is not evidence
+  of a manual input bug; the form's own future defaults were used for proposals.
 
 ## User requirements
 

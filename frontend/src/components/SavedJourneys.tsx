@@ -9,7 +9,7 @@ import { dt, eur, riskCls } from "../lib";
  * save land instead of trusting a one-line confirmation. Read-only: approving a
  * plan still happens in the control room.
  */
-export function SavedJourneys({ nodes, refreshKey, onReview }: { nodes: NetNode[]; refreshKey: number; onReview: () => void }) {
+export function SavedJourneys({ nodes, refreshKey, onReview }: { nodes: NetNode[]; refreshKey: number; onReview: (id?:string) => void }) {
   const [ships, setShips] = useState<Shipment[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,7 +45,7 @@ export function SavedJourneys({ nodes, refreshKey, onReview }: { nodes: NetNode[
       )}
 
       <div className="saved-list">
-        {mine.slice(0, 8).map((s) => (
+        {[...mine].sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)).slice(0, 8).map((s) => (
           <div className="saved-row" key={s.id}>
             <span className="saved-id">
               <b>{s.id}</b>
@@ -64,11 +64,12 @@ export function SavedJourneys({ nodes, refreshKey, onReview }: { nodes: NetNode[
               {s.status.replace(/_/g, " ")}
             </span>
             <span className={riskCls(s.risk_level)}>{s.risk_level}</span>
-            {s.disruption_savings && (
+            <span className="saved-row-actions">{s.disruption_savings && (
               <span className="saved-flag" title={s.disruption_savings.basis}>
                 re-routed · {Math.abs(s.disruption_savings.minutes_avoided)}m avoided
               </span>
             )}
+            <button className="linkbtn saved-review-button" aria-label={`Review ${s.id} in control room`} onClick={()=>onReview(s.id)}>Review <ArrowUpRight size={13}/></button></span>
           </div>
         ))}
       </div>
@@ -76,7 +77,7 @@ export function SavedJourneys({ nodes, refreshKey, onReview }: { nodes: NetNode[
       {mine.length > 0 && (
         <div className="saved-foot">
           <span>Saved plans are proposals. A shipment’s route changes only when a manager approves it.</span>
-          <button className="linkbtn" onClick={onReview}>Open control room <ArrowUpRight size={13} /></button>
+          <button className="linkbtn" onClick={()=>onReview()}>Open control room <ArrowUpRight size={13} /></button>
         </div>
       )}
     </details>

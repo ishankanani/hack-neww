@@ -14,7 +14,7 @@ export function RouteCompare({nodes,options,selected,onSelect,onRefresh,deadline
  const mapNodes=useMemo(()=>opt?.vehicle_start?[...nodes,{id:"@vehicle",name:"Reported vehicle position",lat:opt.vehicle_start.lat,lon:opt.vehicle_start.lon,type:"branch" as const,source:opt.vehicle_start.source}]:nodes,[nodes,opt?.vehicle_start]);
  const name=(id:string)=>mapNodes.find(n=>n.id===id)?.name??id;
  const sim=useJourneySimulation({option:opt,options,nodes:mapNodes,deadline,truck,weatherZones,onCommitted:onScenario});
- const choose=useCallback((i:number)=>{setLocal(i);setStep(0);onSelect?.(i)},[onSelect]);
+ const choose=useCallback((i:number)=>{setLocal(i);setStep(0);setShowAffectedRoad(false);onSelect?.(i)},[onSelect]);
  if(!opt)return <div className="empty">No available options.</div>;
  const current=opt.steps[Math.min(step,opt.steps.length-1)];
  const clear=opt.avoidance_status==="CLEAR"?opt:options.find(o=>o.avoidance_status==="CLEAR"&&o.path.join("-")===opt.path.join("-"));

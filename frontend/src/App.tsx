@@ -28,7 +28,8 @@ export default function App() {
   const [ops, setOps] = useState<Operations | null>(null);
   const [tick, setTick] = useState(0);
   const [savedJourney,setSavedJourney]=useState<Shipment|null>(null);
-  const saved=(shipment:Shipment)=>{setSavedJourney(shipment);setTick(value=>value+1)};
+  const [reviewRequest,setReviewRequest]=useState<{id:string;version:number}|null>(null);
+  const saved=(shipment:Shipment)=>{setSavedJourney(shipment);setReviewRequest(prev=>({id:shipment.id,version:(prev?.version??0)+1}));setTick(value=>value+1)};
   const [err, setErr] = useState("");
   const moreMenu = useRef<HTMLDetailsElement>(null);
 
@@ -110,11 +111,11 @@ export default function App() {
 
         <div style={{ display: tab === "planner" ? "block" : "none" }}>
           {visited.has("planner") && (
-            <Planner nodes={nodes} revision={ops?.revision ?? 0} onSaved={saved} onChange={refresh} onReview={() => selectTab("control")} />
+            <Planner nodes={nodes} revision={ops?.revision ?? 0} onSaved={saved} onChange={refresh} onReview={(id) => {if(id)setReviewRequest(prev=>({id,version:(prev?.version??0)+1}));selectTab("control")}} />
           )}
         </div>
         <div style={{ display: tab === "control" ? "block" : "none" }}>
-          {visited.has("control") && <ControlRoom nodes={nodes} onChange={refresh} refreshKey={tick} active={tab==="control"} savedJourney={savedJourney} onSaved={saved} />}
+          {visited.has("control") && <ControlRoom nodes={nodes} onChange={refresh} refreshKey={tick} active={tab==="control"} savedJourney={savedJourney} reviewRequest={reviewRequest} onSaved={saved} />}
         </div>
         <div style={{ display: tab === "shipments" ? "block" : "none" }}>
           {visited.has("shipments") && <Shipments nodes={nodes} />}

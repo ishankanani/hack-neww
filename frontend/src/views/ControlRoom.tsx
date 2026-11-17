@@ -18,10 +18,11 @@ const routeClear=(o?:RouteOption)=>!!o&&o.route_feasible!==false&&o.capacity?.fe
 const groupOf=(s:Shipment):QueueGroup=>s.hold||s.plan_change?.material||["CRITICAL","HIGH"].includes(s.dispatch?.priority??"")?"review":!s.approved_at?"planned":s.status==="ARRIVAL EXPECTED"||s.dispatch?.priority==="REVIEW"?"review":"active";
 const groupLabel=(s:Shipment)=>({planned:"Planned",review:"Review required",active:"Active",all:"All"}[groupOf(s)]);
 
-export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourney,onSaved}:{nodes:NetNode[];onChange:()=>void;refreshKey?:number;active?:boolean;savedJourney?:Shipment|null;onSaved?:(s:Shipment)=>void}){
+export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourney,reviewRequest,onSaved}:{nodes:NetNode[];onChange:()=>void;refreshKey?:number;active?:boolean;savedJourney?:Shipment|null;reviewRequest?:{id:string;version:number}|null;onSaved?:(s:Shipment)=>void}){
  const [ships,setShips]=useState<Shipment[]>([]),[ops,setOps]=useState<Operations|null>(null),[detail,setDetail]=useState<Shipment|null>(null);
  const [sel,setSel]=useState(0),[reason,setReason]=useState(""),[ack,setAck]=useState(false),[busy,setBusy]=useState(false);
  const [err,setErr]=useState(""),[msg,setMsg]=useState(""),[filter,setFilter]=useState<QueueGroup>("all"),[creating,setCreating]=useState(false);
+ const [routeDraft,setRouteDraft]=useState(false);
  const loadId=useRef(0);const openedSaved=useRef("");const alive=useRef(true);const reviewId=useRef(0);
  // Journeys saved in this browser stay listed until the server's own list contains
  // them, so a queue response that left before the save (or from a slower server
@@ -37,16 +38,16 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
   setShips([...kept,...s.shipments].filter(x=>x.status!=="DELIVERED").sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)));setOps(o)}}catch(e){if(alive.current)setErr(String(e))}},[]);
  useEffect(()=>{if(!active)return;void load();const timer=window.setInterval(()=>{if(!document.hidden)void load()},30000);return()=>clearInterval(timer)},[active,refreshKey,load]);
  useEffect(()=>{if(savedJourney){pinned.current.set(savedJourney.id,{ship:savedJourney,at:Date.now()});setShips(prev=>[savedJourney,...prev.filter(s=>s.id!==savedJourney.id)])}},[savedJourney]);
- async function review(id:string,recalculate=true){
+ async function review(id:string,recalculate=false){
   if(busy)return;const request=++reviewId.current;setBusy(true);setErr("");setMsg("");setCreating(false);
   try{const saved=await api.shipment(id);const moving=!!saved.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(saved.status);const stale=moving&&(!saved.vehicle_position||Date.now()-Date.parse(saved.vehicle_position.reported_at)>900000);
    const s=recalculate&&!stale?await api.replan(id):saved;if(!alive.current||reviewId.current!==request)return;
-   setDetail(s);const preferred=s.options?.findIndex(o=>o.route_id===s.accepted_plan?.route_id)??-1;setSel(preferred>=0?preferred:s.selected_option??0);setAck(false);setReason("");await load();
+   setDetail(s);const preferred=s.options?.findIndex(o=>o.route_id===s.accepted_plan?.route_id)??-1;setSel(preferred>=0?preferred:s.selected_option??0);setAck(false);setReason("");setRouteDraft(false);await load();
   }catch(e){if(alive.current)setErr(String(e))}finally{if(alive.current&&reviewId.current===request)setBusy(false)}
  }
  const reviewLatest=useRef(review);reviewLatest.current=review;
- useEffect(()=>{if(active&&!busy&&savedJourney&&openedSaved.current!==savedJourney.id){openedSaved.current=savedJourney.id;setFilter("all");void reviewLatest.current(savedJourney.id,false)}},[active,savedJourney?.id,busy]);
- function proposed(s:Shipment){setDetail(s);const preferred=s.options?.findIndex(o=>o.manager_requested&&routeClear(o))??-1;setSel(preferred>=0?preferred:0);setAck(false);setReason("");void load();onChange()}
+ useEffect(()=>{const key=reviewRequest?`${reviewRequest.id}:${reviewRequest.version}`:"";if(active&&!busy&&reviewRequest&&openedSaved.current!==key){openedSaved.current=key;setFilter("all");void reviewLatest.current(reviewRequest.id,false)}},[active,reviewRequest?.id,reviewRequest?.version,busy]);
+ function proposed(s:Shipment){setDetail(s);const preferred=s.options?.findIndex(o=>o.manager_requested&&routeClear(o))??-1;setSel(preferred>=0?preferred:0);setAck(false);setReason("");setRouteDraft(false);void load();onChange()}
  function created(s:Shipment){setCreating(false);setDetail(s);setSel(s.selected_option??0);setShips(prev=>[s,...prev.filter(x=>x.id!==s.id)]);setFilter("all");setMsg(`${s.id} saved. Review the route and record your decision.`);onSaved?.(s);onChange()}
  async function decide(action:string){
   if(!detail)return;setBusy(true);setErr("");const selectedRoute=detail.options?.[sel]?.route_id;
@@ -57,7 +58,7 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
  async function scenarioChanged(){await load();setDetail(null);onChange()}
  const selected=detail?.options?.[sel];const moving=!!detail&&(!!detail.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(detail.status));
  const positionReady=!moving||!!(selected?.remaining_only&&selected.position_id===detail?.vehicle_position?.id&&Date.now()-Date.parse(detail?.vehicle_position?.reported_at??"")<900000);
- const blocked=!routeClear(selected)||!positionReady;
+ const blocked=!routeClear(selected)||!positionReady||routeDraft;
  const name=(id:string)=>nodes.find(n=>n.id===id)?.name??"Vehicle position";
  const visibleShips=ships.filter(s=>filter==="all"||groupOf(s)===filter);
  return <>
@@ -74,15 +75,15 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
     {creating&&<div className="card manager-create-card"><ManagerRoutes nodes={nodes} ops={ops} onProposed={proposed} onCreated={created} onBusyChange={setBusy}/></div>}
     {!detail&&!busy&&!creating&&<div className="card review-placeholder"><ShieldCheck size={42}/><h2>Select a journey</h2><p>Review a saved route or plan a new connection.</p></div>}
     {detail&&!creating&&<div className="card manager-review-card">
-     <div className="manager-review-header"><div><span className={`queue-state queue-state--${groupOf(detail)}`}>{groupLabel(detail)}</span><h2>{name(detail.origin)} → {name(detail.destination)}</h2><span>{detail.id} · {detail.weight_kg.toLocaleString()} kg · {eur(detail.value_eur)} shipment value</span></div><button className="btn btn--ghost" disabled={busy} onClick={()=>void review(detail.id)}><RefreshCw size={14}/>Recalculate</button></div>
+     <div className="manager-review-header"><div><span className={`queue-state queue-state--${groupOf(detail)}`}>{groupLabel(detail)}</span><h2>{name(detail.origin)} → {name(detail.destination)}</h2><span>{detail.id} · {detail.weight_kg.toLocaleString()} kg · {eur(detail.value_eur)} shipment value</span></div><button className="btn btn--ghost" disabled={busy} onClick={()=>void review(detail.id,true)}><RefreshCw size={14}/>Recalculate</button></div>
      {detail.hold&&<div className="manager-state-message is-hold"><b>Shipment on hold</b><span>{detail.hold.reason}</span></div>}
      {!positionReady&&<div className="manager-state-message is-warning"><b>Current location needed</b><span>The saved itinerary is shown below. A fresh vehicle position is required before changing an active journey.</span></div>}
-     <ManagerRoutes key={detail.id} nodes={nodes} shipment={detail} ops={ops} disabled={busy} onProposed={proposed} onCreated={created} onBusyChange={setBusy}/>
+     <ManagerRoutes key={detail.id} nodes={nodes} shipment={detail} ops={ops} disabled={busy} onDraftChange={setRouteDraft} onProposed={proposed} onCreated={created} onBusyChange={setBusy}/>
      <PlanChangeNotice saved={detail.accepted_plan} proposed={selected}/>
      {!!detail.options?.length&&<RouteCompare nodes={nodes} options={detail.options} selected={sel} onSelect={i=>{setSel(i);setAck(false)}} showJourneyTools={false} weatherZones={ops?.weather_zones??[]}/>}
      {selected?.unavailable_reasons?.length&&<div className="manager-state-message is-warning"><b>Why this route needs review</b>{selected.unavailable_reasons.map(r=><span key={r}>{r}</span>)}</div>}
      {positionReady&&detail.dispatch_actions&&<details className="manager-dispatch-details"><summary>Dispatch choices</summary><DispatchActions actions={detail.dispatch_actions} selected={sel} onSelect={i=>{setSel(i);setAck(false)}}/></details>}
-     <form className="decision-form" onSubmit={e=>{e.preventDefault();void decide("accept")}}><div className="decision-heading"><ShieldCheck size={19}/><div><h3>Manager decision</h3><span>{blocked?"Choose an available route or record a hold.":"Review the route and confirm your decision."}</span></div></div><label>Reason<textarea required minLength={3} placeholder="Add the reason for this decision" value={reason} onChange={e=>setReason(e.target.value)}/></label>{selected&&!selected.risk.deadline_ok&&<label className="ack"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>I acknowledge the delivery deadline will be missed.</label>}<div className="decision-buttons"><button className="btn" disabled={busy||blocked||reason.trim().length<3||(!selected?.risk.deadline_ok&&!ack)}><Check size={15}/>{detail.hold?"Approve & release hold":"Approve selected route"}</button><button type="button" className="btn btn--hold" disabled={busy||!selected||reason.trim().length<3} onClick={()=>void decide("hold")}><Pause size={14}/>{moving?"Request safe stop":"Place on hold"}</button><button type="button" className="btn btn--ghost" disabled={busy||!selected||reason.trim().length<3} onClick={()=>void decide("keep")}>Keep saved plan</button><button type="button" className="btn btn--ghost" disabled={busy||!selected||reason.trim().length<3} onClick={()=>void decide("defer")}>Defer</button></div></form>
+     <form className="decision-form" onSubmit={e=>{e.preventDefault();void decide("accept")}}><div className="decision-heading"><ShieldCheck size={19}/><div><h3>Manager decision</h3><span>{routeDraft?"Calculate your hub changes before approving a route.":blocked?"Choose an available route or record a hold.":"Review the route and confirm your decision."}</span></div></div><label>Reason<textarea required minLength={3} placeholder="Add the reason for this decision" value={reason} onChange={e=>setReason(e.target.value)}/></label>{selected&&!selected.risk.deadline_ok&&<label className="ack"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>I acknowledge the delivery deadline will be missed.</label>}<div className="decision-buttons"><button className="btn" disabled={busy||blocked||reason.trim().length<3||(!selected?.risk.deadline_ok&&!ack)}><Check size={15}/>{detail.hold?"Approve & release hold":"Approve selected route"}</button><button type="button" className="btn btn--hold" disabled={busy||!selected||reason.trim().length<3} onClick={()=>void decide("hold")}><Pause size={14}/>{moving?"Request safe stop":"Place on hold"}</button><button type="button" className="btn btn--ghost" disabled={busy||!selected||reason.trim().length<3} onClick={()=>void decide("keep")}>Keep saved plan</button><button type="button" className="btn btn--ghost" disabled={busy||!selected||reason.trim().length<3} onClick={()=>void decide("defer")}>Defer</button></div></form>
     </div>}
    </section>
   </div>
