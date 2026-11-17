@@ -101,8 +101,12 @@ async def fresh_api_responses(request,call_next):
     if persistence.configured() and not stateless and (request.method=="GET" or request.url.path=="/api/route"):
         from starlette.concurrency import run_in_threadpool
         try:await run_in_threadpool(refresh_shared_state)
-        except persistence.StorageUnavailable as exc:
-            return JSONResponse(status_code=503,content={"detail":str(exc)},headers={"Cache-Control":"no-store"})
+        except persistence.StorageUnavailable:
+            # A pooled connection may have been closed by the database; retry once on a fresh one.
+            persistence.reset_pool()
+            try:await run_in_threadpool(refresh_shared_state)
+            except persistence.StorageUnavailable as exc:
+                return JSONResponse(status_code=503,content={"detail":str(exc)},headers={"Cache-Control":"no-store"})
     response=await call_next(request)
     if request.url.path.startswith("/api/"):response.headers["Cache-Control"]="no-store"
     return response
