@@ -30,28 +30,13 @@ export function Shipments({ nodes, ops }: { nodes: NetNode[]; ops: Operations|nu
   return (
     <>
       <div className="card">
-        <div className="card__h"><div><h2><Truck size={15} className="h-ic" /> Shipments</h2><div className="sub">plan → compare → schedule (with feasibility check)</div></div>
+        <div className="card__h"><div><h2><Truck size={15} className="h-ic" /> Shipments</h2></div>
           <button className="btn btn--sm" onClick={() => setCreating(true)}><Plus size={14} /> New shipment</button></div>
-        <details className="shipment-guide" open>
-          <summary>How to read these shipment fields</summary>
-          <dl>
-            <div><dt>ID</dt><dd>App-generated reference for this shipment record.</dd></div>
-            <div><dt>Route</dt><dd>The planned branch-to-branch path; arrows show any intermediate hub stops.</dd></div>
-            <div><dt>Status</dt><dd>PLANNED awaits approval. ON HOLD stays paused until a fresh clear route is approved. SCHEDULED moves to IN TRANSIT at departure, DELAYED if its deadline passes, and ARRIVAL EXPECTED after its ETA. DELIVERED requires a recorded confirmation.</dd></div>
-            <div><dt>ETA / Required</dt><dd>ETA is the estimated arrival; Required is the delivery deadline entered for the shipment.</dd></div>
-            <div><dt>Delay</dt><dd>How late the estimated arrival is against the required deadline. A dash means it is not currently late.</dd></div>
-            <div><dt>Weight / Value</dt><dd>Shipment inputs used for capacity, estimated cost and risk calculations.</dd></div>
-            <div><dt>Cost</dt><dd>Estimated transport cost. Final charges may differ.</dd></div>
-            <div><dt>Risk</dt><dd>Summarizes deadline slack, wait rules, lane history and shipment value.</dd></div>
-            <div><dt>Alert</dt><dd>A specific warning, such as a missed delivery deadline.</dd></div>
-          </dl>
-          <p>Time-based statuses are estimates, not live GPS or proof of delivery. The list refreshes every minute. Select a row to compare route options and schedule one.</p>
-        </details>
         <div className="filters">
           <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}><option value="">All statuses</option>{["PLANNED", "SCHEDULED", "ON HOLD", "IN TRANSIT", "DELAYED", "ARRIVAL EXPECTED", "DELIVERED"].map((s) => <option key={s}>{s}</option>)}</select>
-          <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.at_risk} onChange={(e) => setF({ ...f, at_risk: e.target.checked })} /> At risk</label>
-          <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.high_value} onChange={(e) => setF({ ...f, high_value: e.target.checked })} /> High-value</label>
-          <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.delayed} onChange={(e) => setF({ ...f, delayed: e.target.checked })} /> Delayed</label>
+          <label style={{ fontSize: 14, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.at_risk} onChange={(e) => setF({ ...f, at_risk: e.target.checked })} /> At risk</label>
+          <label style={{ fontSize: 14, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.high_value} onChange={(e) => setF({ ...f, high_value: e.target.checked })} /> High-value</label>
+          <label style={{ fontSize: 14, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.delayed} onChange={(e) => setF({ ...f, delayed: e.target.checked })} /> Delayed</label>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table className="htbl">
@@ -66,7 +51,7 @@ export function Shipments({ nodes, ops }: { nodes: NetNode[]; ops: Operations|nu
                   <td className="num">{s.delay_minutes ? <span style={{ color: "var(--bad)", fontWeight: 700 }}>{hm(s.delay_minutes)}</span> : "—"}</td>
                   <td className="num">{(s.weight_kg / 1000).toFixed(1)}t</td><td className="num">{eur(s.value_eur)}</td><td className="num">{eur(s.est_cost_eur)}</td>
                   <td><span className={riskCls(s.risk_level)}>{s.risk_level}</span></td>
-                  <td>{s.alert ? <span style={{ color: "var(--bad)", fontSize: 11, fontWeight: 700 }}><AlertTriangle size={11} style={{ verticalAlign: -1 }} /> {s.alert}</span> : ""}</td>
+                  <td>{s.alert ? <span style={{ color: "var(--bad)", fontSize: 12.5, fontWeight: 700 }}><AlertTriangle size={11} style={{ verticalAlign: -1 }} /> {s.alert}</span> : ""}</td>
                 </tr>
               ))}
             </tbody>
@@ -107,12 +92,12 @@ function Drawer({ nodes, ops, shipment, onClose, onChanged }: { nodes: NetNode[]
   const s = shipment;
   const [selected,setSelected] = useState(0);
   const [reason,setReason]=useState(""),[busy,setBusy]=useState(false);
-  const sched = async(force:boolean)=>{setBusy(true);try{const o=s.options?.[selected];if(!o)throw Error("Recalculate first");await api.decide({shipment_id:s.id,action:"accept",option:selected,revision:o.revision??-1,quote_id:o.quote_id,reason,acknowledge_deadline:force});setMsg("Scheduled ✓ · decision recorded");onChanged()}catch(e){setMsg(String(e));onChanged()}finally{setBusy(false)}};
+  const sched = async(force:boolean)=>{setBusy(true);try{const o=s.options?.[selected];if(!o)throw Error("Recalculate first");await api.decide({decided_by:(()=>{try{return localStorage.getItem("dachser-decided-by")??undefined}catch{return undefined}})(),shipment_id:s.id,action:"accept",option:selected,revision:o.revision??-1,quote_id:o.quote_id,reason,acknowledge_deadline:force});setMsg("Scheduled ✓ · decision recorded");onChanged()}catch(e){setMsg(String(e));onChanged()}finally{setBusy(false)}};
 
   return (
     <div className="drawer-bg" onClick={onClose}><div className="drawer" onClick={(e) => e.stopPropagation()}>
       <button className="x" onClick={onClose}><X size={18} /></button>
-      <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>{s.id} {s.data_kind==="demo"&&<span className="mini">DEMO</span>} <span className={riskCls(s.risk_level)}>{s.risk_level}</span> <span className={stCls(s.status)}>{s.status}</span></h2>
+      <h2 style={{ margin: "0 0 4px", fontSize: 19 }}>{s.id} {s.data_kind==="demo"&&<span className="mini">DEMO</span>} <span className={riskCls(s.risk_level)}>{s.risk_level}</span> <span className={stCls(s.status)}>{s.status}</span></h2>
       <div className="kv">
         <span className="k">Route</span><span className="v">{s.route.map((id) => nodes.find((n) => n.id === id)?.name ?? id).join(" → ")}</span>
         <span className="k">ETA</span><span className="v">{dt(s.current_eta)}</span>

@@ -8,3 +8,5 @@ import "./combined.css";
 import "./simulation.css";
 import "./professional.css";
 import "./workspace.css";
+
+import "./readability.css";

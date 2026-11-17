@@ -1,6 +1,6 @@
 import "./dispatch.css";
 import { useEffect, useRef, useState } from "react";
-import { Truck, Route, PiggyBank, BarChart3, RefreshCw, ShieldCheck, CloudSun, BookOpen, ArrowUpRight, Activity } from "lucide-react";
+import { Truck, Route, PiggyBank, BarChart3, RefreshCw, ShieldCheck, CloudSun, ArrowUpRight, Activity } from "lucide-react";
 import { api } from "./api/client";
 import type { NetworkDoc, Provider, Operations, Shipment } from "./api/types";
 import { statusClass } from "./lib";
@@ -10,13 +10,12 @@ import { Savings } from "./views/Savings";
 import { Analytics } from "./views/Analytics";
 import { ControlRoom } from "./views/ControlRoom";
 import { DriverUpdates } from "./views/DriverUpdates";
-import { Assumptions } from "./views/Assumptions";
 import { DACHSER_LOGO } from "./logo";
 const TABS = [
   { id:"planner", label:"Route planner", icon:Route },
   { id:"control", label:"Control room", icon:ShieldCheck }, { id:"shipments", label:"Shipments", icon:Truck },
   { id:"analytics", label:"Network intelligence", icon:BarChart3 },
-  { id:"savings", label:"Savings", icon:PiggyBank }, { id:"driver",label:"Driver updates",icon:Truck }, { id:"assumptions", label:"Assumptions", icon:BookOpen }
+  { id:"savings", label:"Savings", icon:PiggyBank }, { id:"driver",label:"Driver updates",icon:Truck }
 ];
 const PRIMARY_TABS = ["planner", "control", "shipments", "analytics", "savings"];
 export default function App() {
@@ -124,7 +123,7 @@ export default function App() {
           {visited.has("analytics") && (
             <>
               <div className="page-heading">
-                <div><h1>Network intelligence</h1><p>Journey history and facility performance.</p></div>
+                <div><h1>Network intelligence</h1></div>
               </div>
               <Analytics onData={refresh} />
             </>
@@ -132,9 +131,6 @@ export default function App() {
         </div>
         <div style={{ display: tab === "savings" ? "block" : "none" }}>
           {visited.has("savings") && <Savings />}
-        </div>
-        <div style={{ display: tab === "assumptions" ? "block" : "none" }}>
-          {visited.has("assumptions") && <Assumptions />}
         </div>
 
         <div style={{display:tab==="driver"?"block":"none"}}>{visited.has("driver")&&<DriverUpdates nodes={nodes}/>}</div>

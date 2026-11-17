@@ -23,7 +23,7 @@ from .weather_routes import active_zones, crossed_zones, closest_clear_detour, C
 FLOOR_KMH = 65.0
 
 
-def _leg(providers, a, b, depart, truck, operations=None, avoid_weather=False):
+def _leg(providers, a, b, depart, truck, operations=None, avoid_weather=False, blocked=()):
     """One road leg with geometry. Returns a dict with a status we can be honest about."""
     road = None
     if getattr(providers, "tomtom", None) is not None and getattr(providers.tomtom, "key", ""):
@@ -40,19 +40,20 @@ def _leg(providers, a, b, depart, truck, operations=None, avoid_weather=False):
                 "source": "Straight-line fallback — routing unavailable", "routed": False}
     weather_detours = []
     weather_clear = None
-    if avoid_weather:
+    if avoid_weather or blocked:
         original = road
-        zones = []
+        # Blocked road spots are avoided like small hazard areas, together with any active weather.
+        zones = list(blocked)
         while True:
             minutes = max(1, road.get("duration_minutes", 60), math.ceil(road.get("distance_km",0)/FLOOR_KMH*60))
-            added = [z for z in active_zones(operations, depart, depart+timedelta(minutes=minutes))
+            added = [z for z in (active_zones(operations, depart, depart+timedelta(minutes=minutes)) if avoid_weather else [])
                      if z["id"] not in {v["id"] for v in zones}]
             zones.extend(added)
             if not crossed_zones(road["geometry"], zones, CLEARANCE_KM):break
             clear = closest_clear_detour(providers, a, b, original, zones, depart, truck or DEFAULT_TRUCK)
             if not clear:
                 return {"geometry": None, "distance_km": road.get("distance_km", 0), "duration_minutes": 0,
-                        "source": "No verified local or wider detour clears all active weather zones",
+                        "source": "No verified local or wider detour avoids the blocked road and active weather zones",
                         "routed": False, "weather_clear": False}
             road = clear
             weather_detours = road.get("weather_detours",[])
@@ -70,7 +71,7 @@ def _leg(providers, a, b, depart, truck, operations=None, avoid_weather=False):
             "weather_clear": weather_clear, "weather_detours": weather_detours}
 
 
-def reroute(ctx, lat, lon, destination, via=None, depart=None, truck=None, transfer_minutes=0, avoid_weather=False):
+def reroute(ctx, lat, lon, destination, via=None, depart=None, truck=None, transfer_minutes=0, avoid_weather=False, avoid_points=()):
     """
     Road route from (lat, lon) to `destination`, optionally through facility `via`.
 
@@ -95,9 +96,11 @@ def reroute(ctx, lat, lon, destination, via=None, depart=None, truck=None, trans
     geometry, legs, minutes, km, clock = [], [], 0, 0.0, depart
     hold = round(transfer_minutes) if via else 0
     weather_detours=[]
+    blocked = [{"id": f"blocked-{i}", "kind": "blockage", "lat": p["lat"], "lon": p["lon"], "radius_km": p.get("radius_km", 2)}
+               for i, p in enumerate(avoid_points or [])]
     for a, b in zip(waypoints, waypoints[1:]):
-        leg = _leg(ctx["providers"], a, b, clock, truck, ctx.get("operations"), avoid_weather)
-        if avoid_weather and not leg.get("weather_clear"):
+        leg = _leg(ctx["providers"], a, b, clock, truck, ctx.get("operations"), avoid_weather, blocked)
+        if (avoid_weather or blocked) and not leg.get("weather_clear"):
             return {"status":"UNAVAILABLE","geometry":None,"distance_km":round(km+leg["distance_km"],1),
                     "drive_minutes":round(minutes),"hold_minutes":0,"total_minutes":round(minutes),
                     "eta":clock.isoformat(),"via":via,"legs":legs,"source":leg["source"],
@@ -127,7 +130,8 @@ def reroute(ctx, lat, lon, destination, via=None, depart=None, truck=None, trans
         "via": via,
         "legs": legs,
         "source": " + ".join(sorted({l["source"] for l in legs})),
-        "weather_clear": True if avoid_weather else None,
+        "weather_clear": True if (avoid_weather or blocked) else None,
+        "avoided_blockage": bool(blocked),
         "weather_detours": weather_detours,
         "note": "Live re-route computed from the vehicle's current position using the same routing providers as the "
                 "planner. Holds, weekend rules and calendar restrictions beyond the intermediate transfer are not "

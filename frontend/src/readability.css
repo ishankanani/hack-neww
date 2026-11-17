@@ -1,0 +1,23 @@
+/* Readability: clearer weights for headings and labels (loaded last). */
+h1{font-weight:800}
+h2,h3,.card__h h2{font-weight:800}
+th,.htbl th{font-weight:700}
+label,.fld label,dt{font-weight:700}
+.workspace-nav button{font-weight:600}
+.workspace-nav button.active,.workspace-nav button[aria-current="page"]{font-weight:800}
+.savings-explainer{padding:16px 20px;margin-bottom:16px}
+.savings-explainer summary{cursor:pointer;font-size:16px}
+.savings-explainer ol{margin:10px 0 6px;padding-left:22px;display:grid;gap:6px;line-height:1.55}
+.saved-list,.decision-list{scrollbar-gutter:stable}
+.decision-scroll-hint{margin:4px 0 8px;color:var(--muted);font-size:13.5px}
+.decision-facts{display:grid;gap:4px;margin:6px 0}
+.decision-facts>div{display:grid;grid-template-columns:64px 1fr;gap:8px}
+.decision-facts dt{color:var(--muted)}
+.decision-facts dd{margin:0}
+.decision-form input{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:8px;width:100%}
+.ni-section>summary{cursor:pointer;list-style:none}
+.ni-section>summary::-webkit-details-marker{display:none}
+.ni-section>summary h2::after{content:"▾";margin-left:8px;color:var(--muted);font-size:14px}
+.ni-section:not([open])>summary h2::after{content:"▸"}
+.show-more{display:block;margin:10px auto 4px;background:none;border:1px solid var(--line);border-radius:999px;padding:7px 16px;font:inherit;font-weight:700;cursor:pointer;color:var(--ink)}
+.show-more:hover{background:#f3f6f5}

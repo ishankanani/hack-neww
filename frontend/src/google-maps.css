@@ -1,16 +1,16 @@
 .google-map-canvas { width: 100%; height: 420px; min-height: 340px; background: #edf2ed; }
-.google-map-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: #5d7867; background: #f1f6f0b3; font-size: 13px; }
-.google-provider-label { padding-right: 4px; color: #3d6e51; font-size: 12px; font-weight: 700; }
-.google-live-map .map-settings-menu label { display: flex; gap: 8px; flex-direction: column; font-size: 12px; color: #607968; }
+.google-map-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: #5d7867; background: #f1f6f0b3; font-size:14.5px; }
+.google-provider-label { padding-right: 4px; color: #3d6e51; font-size:13.5px; font-weight: 700; }
+.google-live-map .map-settings-menu label { display: flex; gap: 8px; flex-direction: column; font-size:13.5px; color: #607968; }
 .google-live-map .map-settings-menu select { padding: 9px; width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
 .google-map-information { max-width: 270px; padding: 4px 5px 8px; color: #305d43; font: 12px/1.65 var(--font); }
-.google-map-information strong { display: block; font-size: 14px; margin-bottom: 8px; }
+.google-map-information strong { display: block; font-size:15px; margin-bottom: 8px; }
 .google-map-information p { margin: 5px 0; color: #708372; white-space: pre-line; }
-.map-provider-switch { padding: 9px 14px; font-size: 12px; color: #718376; background: #f4f8f4; border-bottom: 1px solid var(--line); }
+.map-provider-switch { padding: 9px 14px; font-size:13.5px; color: #718376; background: #f4f8f4; border-bottom: 1px solid var(--line); }
 .google-live-map .facility-marker, .google-live-map .weather-marker, .google-live-map .incident-marker { cursor: pointer; }
 .google-live-map .truck-marker { transform-origin: center; }
 .google-weather-effects { position: absolute; left: 0; top: 0; pointer-events: none; }
-.google-route-label { padding: 5px 9px; border: 2px solid #fff; border-radius: 8px; background: var(--route-color); color: #fff; font-size: 11px; font-weight: 750; white-space: nowrap; box-shadow: 0 2px 7px #173e3733; cursor: pointer; }
+.google-route-label { padding: 5px 9px; border: 2px solid #fff; border-radius: 8px; background: var(--route-color); color: #fff; font-size:12.5px; font-weight: 750; white-space: nowrap; box-shadow: 0 2px 7px #173e3733; cursor: pointer; }
 .map-legend button { display: inline-flex; align-items: center; gap: 7px; padding: 2px 4px; border: 0; background: transparent; color: var(--muted); font-size: inherit; }
 .google-weather-effects .sim-weather-effect { border: 0; border-radius: 0; box-shadow: none; }
 .google-weather-effects .sim-weather-effect--snow { background: radial-gradient(circle var(--zone-radius) at var(--zone-center-x) var(--zone-center-y), #c8e9ff6b 0%, #6bb3e74b 64%, #3388c438 100%); }
@@ -18,4 +18,4 @@
 .google-weather-effects .sim-weather-effect--tornado { background: radial-gradient(circle var(--zone-radius) at var(--zone-center-x) var(--zone-center-y), #d96b9966 0%, #97376466 60%, #5c254957 100%); }
 .google-weather-effects .sim-tornado-core { left: calc(var(--zone-center-x) - var(--tornado-size) / 2); top: calc(var(--zone-center-y) - var(--tornado-size) / 2); width: var(--tornado-size); height: var(--tornado-size); }
 .google-live-map .sim-place-layer { bottom: 32px; }
-@media (max-width: 650px) { .google-map-canvas { height: 390px; } .google-provider-label { font-size: 11px; } }
+@media (max-width: 650px) { .google-map-canvas { height: 390px; } .google-provider-label { font-size:12.5px; } }

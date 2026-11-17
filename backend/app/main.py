@@ -101,8 +101,12 @@ async def fresh_api_responses(request,call_next):
     if persistence.configured() and not stateless and (request.method=="GET" or request.url.path=="/api/route"):
         from starlette.concurrency import run_in_threadpool
         try:await run_in_threadpool(refresh_shared_state)
-        except persistence.StorageUnavailable as exc:
-            return JSONResponse(status_code=503,content={"detail":str(exc)},headers={"Cache-Control":"no-store"})
+        except persistence.StorageUnavailable:
+            # A pooled connection may have been closed by the database; retry once on a fresh one.
+            persistence.reset_pool()
+            try:await run_in_threadpool(refresh_shared_state)
+            except persistence.StorageUnavailable as exc:
+                return JSONResponse(status_code=503,content={"detail":str(exc)},headers={"Cache-Control":"no-store"})
     response=await call_next(request)
     if request.url.path.startswith("/api/"):response.headers["Cache-Control"]="no-store"
     return response
@@ -518,6 +522,12 @@ class DecisionReq(BaseModel):
     acknowledge_deadline: bool = False
     supersedes_decision_id: Optional[str] = None
     supersedes_updated_at: Optional[str] = None
+    decided_by: Optional[str] = Field(default=None, max_length=80)  # name entered by the manager (no login yet)
+
+    @model_validator(mode="after")
+    def clean_name(self):
+        self.decided_by = (self.decided_by or "").strip() or None
+        return self
 
 def _node(nid):
     if nid not in S["network"]["nodes"]: raise ValueError("Unknown hub")
@@ -784,6 +794,14 @@ class RerouteReq(BaseModel):
     truck: TruckReq = Field(default_factory=TruckReq)
     transfer_minutes: int = Field(default=0, ge=0, le=1440)
     avoid_weather: bool = False
+    avoid_points: list[dict] = Field(default_factory=list, max_length=10)  # blocked road spots: {lat, lon, radius_km}
+
+    @model_validator(mode="after")
+    def check_points(self):
+        for p in self.avoid_points:
+            if not (-85 <= float(p.get("lat", 999)) <= 85 and -180 <= float(p.get("lon", 999)) <= 180 and 0.5 <= float(p.get("radius_km", 2)) <= 30):
+                raise ValueError("Invalid blocked road position")
+        return self
 
 
 @app.post("/api/simulate/reroute")
@@ -798,7 +816,7 @@ def simulate_reroute_endpoint(req: RerouteReq):
         raise HTTPException(422, "Intermediate facility equals destination")
     return simulate_reroute(_ctx(), req.lat, req.lon, req.destination, req.via,
                             _parse(req.depart_at) if req.depart_at else None,
-                            req.truck.model_dump(), req.transfer_minutes, req.avoid_weather)
+                            req.truck.model_dump(), req.transfer_minutes, req.avoid_weather, req.avoid_points)
 
 
 @app.get("/api/traffic-tiles/{z}/{x}/{y}.png")
