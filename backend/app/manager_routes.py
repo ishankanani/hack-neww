@@ -28,7 +28,11 @@ def add_route_constraints(option, network):
     if option.get("capacity", {}).get("feasible") is False:
         reasons.append("The requested hub or departure service has insufficient capacity.")
     if not option["risk"]["deadline_ok"]:
-        reasons.append(f"Arrival {option['eta']} misses the delivery deadline. Review the alternative arrival times.")
+        # Same local time and format the planner shows, so the reason and the
+        # metrics beside it never appear to disagree by the UTC offset.
+        from zoneinfo import ZoneInfo
+        arrival = parse(option["eta"]).astimezone(ZoneInfo("Europe/Berlin")).strftime("%a %d %b, %H:%M")
+        reasons.append(f"Arrival {arrival} misses the delivery deadline. Review the alternative arrival times.")
     option["unavailable_reasons"] = reasons
 
 

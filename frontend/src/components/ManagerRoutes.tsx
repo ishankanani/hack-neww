@@ -22,8 +22,11 @@ export function ManagerRoutes({nodes,shipment,ops,onProposed,onCreated,disabled=
  const name=(id:string)=>nodes.find(n=>n.id===id)?.name??"Vehicle position";
  const clearDraft=()=>{setResult(null);setCalculated(null)};
  const changeVia=(next:string[])=>{setVia(next);clearDraft()};
- const requested=shipment?.manager_route_request?shipment.options?.filter(o=>o.manager_requested):[];
+ // A saved journey carries its request on the shipment; a new journey only has the
+ // calculation result. Explain the requested connection in both cases.
+ const requested=shipment?.manager_route_request?shipment.options?.filter(o=>o.manager_requested):result?.options.filter(o=>o.manager_requested);
  const bestRequested=requested?.find(feasible)??requested?.[0];
+ const requestedState=!bestRequested?"":!feasible(bestRequested)?"unavailable":!bestRequested.risk.deadline_ok?"late":"ok";
  async function calculate(){
   setBusy(true);onBusyChange?.(true);setError("");
   try{
@@ -49,7 +52,7 @@ export function ManagerRoutes({nodes,shipment,ops,onProposed,onCreated,disabled=
    {error&&<p className="manager-route-warning" role="alert">{error}</p>}
    <button className="btn" disabled={busy||disabled||!freshPosition}>{busy?"Calculating connections…":"Calculate requested route & alternatives"}</button>
   </form>
-  {bestRequested&&<div className={`requested-route-feedback ${feasible(bestRequested)?"is-feasible":"is-unavailable"}`} role="status"><div><b>{feasible(bestRequested)?"Requested connection is available":"Requested connection needs an alternative"}</b><span>{bestRequested.path.map(name).join(" → ")}</span></div><div className="requested-route-metrics"><span><small>Journey time</small><b>{hm(bestRequested.total_minutes)}</b></span><span><small>Arrival</small><b>{dt(bestRequested.eta)}</b></span><span><small>Transport</small><b>{eur(bestRequested.cost.transport_eur)}</b></span></div>{bestRequested.unavailable_reasons?.map(reason=><p key={reason}>{reason}</p>)}{!feasible(bestRequested)&&<p>Choose a clear option below to compare its arrival time and cost.</p>}</div>}
+  {bestRequested&&<div className={`requested-route-feedback ${requestedState==="ok"?"is-feasible":"is-unavailable"}`} role="status"><div><b>{requestedState==="unavailable"?"Requested connection needs an alternative":requestedState==="late"?"Requested connection is available but misses the delivery deadline":"Requested connection is available"}</b><span>{bestRequested.path.map(name).join(" → ")}</span></div><div className="requested-route-metrics"><span><small>Arrival</small><b>{dt(bestRequested.eta)}</b></span><span><small>Journey time</small><b>{hm(bestRequested.total_minutes)}</b></span><span><small>Distance</small><b>{bestRequested.cost.distance_km} km</b></span><span><small>Fuel</small><b>{bestRequested.cost.fuel_l} L</b></span><span><small>Transport</small><b>{eur(bestRequested.cost.transport_eur)}</b></span></div>{bestRequested.unavailable_reasons?.map(reason=><p key={reason}>{reason}</p>)}{requestedState!=="ok"&&<p>Compare the other options below — each shows its own arrival, journey time and cost.</p>}</div>}
   {result&&<><RouteCompare nodes={nodes} options={result.options} selected={selected} onSelect={setSelected} showJourneyTools={false} weatherZones={ops?.weather_zones}/><div className="manager-save-route"><button className="btn" disabled={busy} onClick={()=>void save()}>Save selected route for review</button></div></>}
  </section>;
 }
