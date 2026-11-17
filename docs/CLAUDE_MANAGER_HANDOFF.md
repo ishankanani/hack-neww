@@ -39,6 +39,22 @@ The local follow-up below records the subsequent fixes and release checks.
 
 ## User requirements
 
+### Map notices added after the manager release
+
+- The planner, control-room review, new manager journey and shipment map receive
+  current operational events. Google, MapLibre and offline maps mark closures and
+  delays only at hubs on the selected itinerary. Popups show manager reasons,
+  effective windows, the planned hub visit and waiting already included in ETA.
+- Matching uses road-leg arrival/departure windows, including origin loading and
+  destination receiving. A current notice outside the planned visit is informational;
+  a stale quote asks for recalculation instead of claiming the new delay is included.
+  Resolved events disappear from the notices. Weather/traffic toggles do not hide
+  manager notices; unchanged polling preserves pins and open popups.
+- Verified the existing Heilbronn closure on Google Maps, including its real ETA
+  waiting step, clickable popup and keyboard zoom/pan. Eight focused logic checks
+  covered event timing, off-route hubs, removal, stale estimates, grouped waits and
+  demo isolation. A production build passed; operational records were not modified.
+
 1. A selected route saved on the home planner must immediately appear in the
    manager control room and survive refreshes/server changes.
 2. Managers need to choose and reorder intermediate hubs, including Würzburg,

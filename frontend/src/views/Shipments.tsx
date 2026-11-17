@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { Plus, X, AlertTriangle, CheckCircle2, Truck } from "lucide-react";
 import { api } from "../api/client";
-import type { NetNode, Shipment } from "../api/types";
+import type { NetNode, Shipment, Operations } from "../api/types";
 import { eur, dt, hm, riskCls, stCls, localInput } from "../lib";
 import { VehicleProgress } from "../components/VehicleProgress";
 import { ActualOutcome } from "../components/ActualOutcome";
 import { PlanChangeNotice } from "../components/PlanChangeNotice";
 import { RouteCompare } from "../components/RouteCompare";
 
-export function Shipments({ nodes }: { nodes: NetNode[] }) {
+export function Shipments({ nodes, ops }: { nodes: NetNode[]; ops: Operations|null }) {
   const [ships, setShips] = useState<Shipment[]>([]);
   const [f, setF] = useState({ status: "", at_risk: false, high_value: false, delayed: false });
   const [creating, setCreating] = useState(false);
@@ -76,7 +76,7 @@ export function Shipments({ nodes }: { nodes: NetNode[] }) {
       </div>
 
       {creating && <CreateModal nodes={nodes} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />}
-      {detail && <Drawer nodes={nodes} shipment={detail} onClose={() => setDetail(null)} onChanged={() => { api.shipment(detail.id).then(setDetail); load(); }} />}
+      {detail && <Drawer ops={ops} nodes={nodes} shipment={detail} onClose={() => setDetail(null)} onChanged={() => { api.shipment(detail.id).then(setDetail); load(); }} />}
     </>
   );
 }
@@ -102,7 +102,7 @@ function CreateModal({ nodes, onClose, onCreated }: { nodes: NetNode[]; onClose:
   );
 }
 
-function Drawer({ nodes, shipment, onClose, onChanged }: { nodes: NetNode[]; shipment: Shipment; onClose: () => void; onChanged: () => void }) {
+function Drawer({ nodes, ops, shipment, onClose, onChanged }: { nodes: NetNode[]; ops: Operations|null; shipment: Shipment; onClose: () => void; onChanged: () => void }) {
   const [msg, setMsg] = useState<string | null>(null);
   const s = shipment;
   const [selected,setSelected] = useState(0);
@@ -129,7 +129,7 @@ function Drawer({ nodes, shipment, onClose, onChanged }: { nodes: NetNode[]; shi
         {!s.options?.[selected]?.risk.deadline_ok && <button className="btn btn--ghost btn--sm" disabled={busy||reason.trim().length<3||s.status==="DELIVERED"||((!!s.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(s.status))&&!s.options?.[selected]?.remaining_only)} onClick={() => sched(true)}>Schedule anyway</button>}
       </div>
       <VehicleProgress key={s.id} shipment={s} onChanged={()=>onChanged()}/><div className="driver-view-link">{s.approved_at&&<a href={`#driver/${encodeURIComponent(s.id)}`}>Open driver update view ↗</a>}</div><ActualOutcome shipment={s} onChange={onChanged}/>
-      {s.options && <div className="card">{<RouteCompare nodes={nodes} showJourneyTools={false} options={s.options} selected={selected} onSelect={setSelected} onRefresh={()=>{if(!busy){setBusy(true);api.replan(s.id).then(onChanged).catch(e=>setMsg(String(e))).finally(()=>setBusy(false))}}} />}</div>}
+      {s.options && <div className="card">{<RouteCompare nodes={nodes} showJourneyTools={false} options={s.options} operationalEvents={s.data_kind==="demo"?[]:ops?.events} operationalRevision={ops?.revision} selected={selected} onSelect={setSelected} onRefresh={()=>{if(!busy){setBusy(true);api.replan(s.id).then(onChanged).catch(e=>setMsg(String(e))).finally(()=>setBusy(false))}}} />}</div>}
     </div></div>
   );
 }

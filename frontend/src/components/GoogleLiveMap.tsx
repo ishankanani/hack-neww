@@ -12,6 +12,8 @@ import { MapWeatherSimulation } from "./MapWeatherSimulation";
 import { routePointForIncident, alternativeColor, alternativeLabelPoint } from "./mapRouteGeometry";
 import { TRUCK_GLYPH } from "./truckGlyph";
 import { RouteWeatherReadout } from "./RouteWeatherReadout";
+import { HubEventSummary } from "./HubEventSummary";
+import { hubNoticeDetails, hubNoticeMarker } from "./routeHubEvents";
 import "../google-maps.css";
 
 const EMPTY: never[] = [];
@@ -23,7 +25,7 @@ function information(title: string, lines: string[]) {
 }
 
 export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY, comparisonGeometry,
-  alternatives = EMPTY, showAlternatives = false, onSelect, routeWeather = EMPTY, trafficSections = EMPTY, sim, demo = false,
+  alternatives = EMPTY, showAlternatives = false, onSelect, routeWeather = EMPTY, trafficSections = EMPTY, hubNotices = EMPTY, sim, demo = false,
   weatherZones = EMPTY, plannedStart, plannedEnd, avoidanceStatus, onAddWeatherZone, onUpdateWeatherZone,
   onDeleteWeatherZone, onCancelWeatherZones, onRefresh, onFallback,
 }: LiveMapProps & { onFallback: () => void }) {
@@ -53,6 +55,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   const roadKey = useMemo(() => JSON.stringify(coords), [coords]);
   const conditionsKey = useMemo(() => JSON.stringify(planned), [planned]);
   const cameraKey = JSON.stringify([planned[0], planned[planned.length - 1]]);
+  const hubNoticesKey = JSON.stringify(hubNotices);
   const dataGeometry = useRef("");
   const forecasts = offset === -1 && routeWeather.length ? routeWeather : data?.weather ?? EMPTY;
   const choose = useRef(onSelect); choose.current = onSelect;
@@ -60,6 +63,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
 
   useEffect(() => {
     let alive = true;
+    setReady(false); lastFit.current = "";
     let dispose = () => {};
     const authError = (event: Event) => setError((event as CustomEvent<string>).detail);
     window.addEventListener("dachser-google-maps-error", authError);
@@ -184,6 +188,24 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
     return () => markers.forEach(marker => { maps.event.clearInstanceListeners(marker); marker.map = null; });
   }, [ready, nodes, path, hubs, alternatives, forecasts, weather, traffic, incidents, offset, data, planned, surface]);
 
+  // Manager notices remain visible independently of weather/traffic layer toggles.
+  useEffect(() => {
+    const maps = sdk.current, native = map.current;
+    if (!ready || !maps || !native) return;
+    const markers = hubNotices.map(notice => {
+      const button = hubNoticeMarker(notice);
+      const marker = googleMarker(maps, native, {lat:notice.node.lat,lng:notice.node.lon}, button, button.title);
+      marker.zIndex = 90; marker.anchorTop = "calc(-100% - 16px)";
+      marker.collisionBehavior = maps.CollisionBehavior.REQUIRED;
+      button.addEventListener("click", () => {
+        info.current?.setContent(information(`${notice.node.name} · ${notice.title}`, hubNoticeDetails(notice, dt)));
+        info.current?.open({map:native,anchor:marker,shouldFocus:false});
+      });
+      return marker;
+    });
+    return () => { info.current?.close(); markers.forEach(marker => { maps.event.clearInstanceListeners(marker); marker.map = null; }); };
+  }, [ready, hubNoticesKey]);
+
   // Sample the same replay clock as the planner; Google owns geographic placement.
   const pausedTruck = sim?.running ? null : sim?.truck;
   useEffect(() => {
@@ -243,6 +265,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
       {!ready && !error && <div className="google-map-loading" role="status">Loading Google Maps…</div>}
     </MapWeatherSimulation>
     <div className="map-legend"><span><i style={{ background: "#17765e" }} />Selected route</span>{showAlternatives && alternatives.map((option,i) => option.geometry?.length && JSON.stringify(option.geometry)!==roadKey ? <button key={option.route_id ?? i} onClick={()=>choose.current?.(i)} aria-label={`View route option ${i+1}`}><i style={{background:alternativeColor(i)}}/>Option {i+1}</button> : null)}<span><i style={{ background: "#de7043" }} />Traffic on route</span>{weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} />Simulated weather</span>}{!!completedGeometry.length && <span>Grey · completed road</span>}</div>
+    <HubEventSummary notices={hubNotices}/>
     <RouteWeatherReadout forecasts={forecasts}/>
   </div>;
 }

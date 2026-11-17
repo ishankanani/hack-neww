@@ -12,6 +12,8 @@ import { GOOGLE_MAPS_KEY } from "./googleMapsApi";
 import { routePointForIncident } from "./mapRouteGeometry";
 import { TRUCK_GLYPH } from "./truckGlyph";
 import { RouteWeatherReadout } from "./RouteWeatherReadout";
+import { HubEventSummary } from "./HubEventSummary";
+import { hubNoticeDetails, hubNoticeMarker, type HubRouteNotice } from "./routeHubEvents";
 
 function buildHubPopupHtml(
   n: NetNode,
@@ -197,6 +199,7 @@ function popup(text: string) {
 
 
 const EMPTY_ZONES: WeatherZone[] = [];
+const EMPTY_HUB_NOTICES: HubRouteNotice[] = [];
 
 export type LiveMapProps = Parameters<typeof OpenStreetMap>[0];
 
@@ -218,6 +221,7 @@ function OpenStreetMap({
   onSelect,
   routeWeather = [],
   trafficSections = [],
+  hubNotices = EMPTY_HUB_NOTICES,
   onRefresh,
   sim,
   weatherZones = EMPTY_ZONES,
@@ -240,6 +244,7 @@ function OpenStreetMap({
   onSelect?: (i: number) => void;
   routeWeather?: LiveWeather[];
   trafficSections?: { geometry: number[][]; delay_minutes: number; description: string }[];
+  hubNotices?: HubRouteNotice[];
   onRefresh?: () => void;
   sim?: SimView;
   weatherZones?: WeatherZone[];
@@ -695,6 +700,18 @@ function OpenStreetMap({
     });
   }, [ready, nodes, path, hubs, alternatives, forecastsKey, trafficKey, data]);
 
+  const hubNoticesKey = JSON.stringify(hubNotices);
+  // Keep pins and open popups when polling returns identical operational records.
+  useEffect(() => {
+    const m = map.current;
+    if (!ready || fallback || !m || loadedMap.current !== m) return;
+    const pins = hubNotices.map(notice => new maplibregl.Marker({element:hubNoticeMarker(notice),anchor:"bottom",offset:[0,-16]})
+      .setLngLat([notice.node.lon,notice.node.lat])
+      .setPopup(new maplibregl.Popup({offset:35,maxWidth:"330px",className:"hub-event-popup"}).setText(`${notice.node.name} · ${notice.title}\n${hubNoticeDetails(notice,dt).join("\n")}`))
+      .addTo(m));
+    return () => pins.forEach(pin => pin.remove());
+  }, [ready, fallback, hubNoticesKey]);
+
   // Weather markers
   useEffect(() => {
     const m = map.current;
@@ -928,7 +945,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
         plannedStart={plannedStart} plannedEnd={plannedEnd} avoidanceStatus={avoidanceStatus}
         onAddWeatherZone={onAddWeatherZone} onUpdateWeatherZone={onUpdateWeatherZone} onDeleteWeatherZone={onDeleteWeatherZone}
         onCancelWeatherZones={onCancelWeatherZones}>
-        {fallback ? <Fallback nodes={nodes} path={path} geometry={geometry} sim={sim} /> : <div ref={ref} className="maplibre" />}
+        {fallback ? <Fallback nodes={nodes} path={path} geometry={geometry} sim={sim} hubNotices={hubNotices}/> : <div ref={ref} className="maplibre" />}
       </MapWeatherSimulation>
       <div className="map-legend">
         <span><i style={{ background: "#17765e" }} /> Selected route</span>
@@ -941,6 +958,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
       {data?.incidents.status === "ERROR" && <div className="map-note">Traffic incidents could not be refreshed. Coverage may be incomplete.</div>}
       {fallback && webglAvailable && <div className="map-note">Road-map tiles are temporarily unavailable. <button className="linkbtn" onClick={() => { failedBasemaps.current.clear(); baseTileFailures.current = { count: 0, since: 0 }; setBasemap("osm"); setError(""); setFallback(false); }}>Retry road map</button></div>}
       {error && !(fallback && webglAvailable) && <div role="alert" className="map-note">{error}</div>}
+      <HubEventSummary notices={hubNotices}/>
       <RouteWeatherReadout forecasts={forecasts}/>
       {showKeyModal && (
         <div className="key-modal-overlay" onClick={() => setShowKeyModal(false)}>
@@ -987,11 +1005,13 @@ function Fallback({
   path,
   geometry,
   sim,
+  hubNotices,
 }: {
   nodes: NetNode[];
   path: string[];
   geometry?: number[][] | null;
   sim?: SimView;
+  hubNotices: HubRouteNotice[];
 }) {
   const W = 760, H = 360, P = 30;
   const lons = nodes.map((n) => n.lon), lats = nodes.map((n) => n.lat);
@@ -1026,6 +1046,11 @@ function Fallback({
         {nodes.filter((n) => n.type === "hub" || onPath.has(n.id)).map((n) => (
           <text key={n.id + "t"} x={X(n.lon) + 8} y={Y(n.lat) + 3} fontSize={10} fontWeight={700} fill="#334">{n.name}</text>
         ))}
+        {hubNotices.map(notice => <g key={notice.node.id} role="img" aria-label={`${notice.node.name}: ${notice.title}`} transform={`translate(${X(notice.node.lon)},${Y(notice.node.lat)-24})`}>
+          <title>{hubNoticeDetails(notice,dt).join("\n")}</title>
+          <rect x={-55} y={-13} width={110} height={22} rx={5} fill={notice.kind==="closure"?"#aa4438":notice.kind==="delay"?"#94641e":"#526c61"}/>
+          <text textAnchor="middle" y={2} fill="#fff" fontSize={10} fontWeight={700}>{notice.title}</text>
+        </g>)}
         {sim?.blockage && (
           <g transform={`translate(${X(sim.blockage.position[0]) - 8}, ${Y(sim.blockage.position[1]) - 8})`}>
             <circle cx={8} cy={8} r={9} fill="#c0392b" />

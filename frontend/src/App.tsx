@@ -118,7 +118,7 @@ export default function App() {
           {visited.has("control") && <ControlRoom nodes={nodes} onChange={refresh} refreshKey={tick} active={tab==="control"} savedJourney={savedJourney} reviewRequest={reviewRequest} onSaved={saved} />}
         </div>
         <div style={{ display: tab === "shipments" ? "block" : "none" }}>
-          {visited.has("shipments") && <Shipments nodes={nodes} />}
+          {visited.has("shipments") && <Shipments nodes={nodes} ops={ops} />}
         </div>
         <div style={{ display: tab === "analytics" ? "block" : "none" }}>
           {visited.has("analytics") && (
