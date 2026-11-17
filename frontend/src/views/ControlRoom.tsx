@@ -23,10 +23,20 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
  const [sel,setSel]=useState(0),[reason,setReason]=useState(""),[ack,setAck]=useState(false),[busy,setBusy]=useState(false);
  const [err,setErr]=useState(""),[msg,setMsg]=useState(""),[filter,setFilter]=useState<QueueGroup>("all"),[creating,setCreating]=useState(false);
  const loadId=useRef(0);const openedSaved=useRef("");const alive=useRef(true);const reviewId=useRef(0);
- useEffect(()=>{alive.current=true;return()=>{alive.current=false;reviewId.current++}},[]);
- const load=useCallback(async()=>{const request=++loadId.current;try{const [s,o]=await Promise.all([api.shipments(),api.operations()]);if(alive.current&&request===loadId.current){setShips(s.shipments.filter(x=>x.status!=="DELIVERED").sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)));setOps(o)}}catch(e){if(alive.current)setErr(String(e))}},[]);
+ // Journeys saved in this browser stay listed until the server's own list contains
+ // them, so a queue response that left before the save (or from a slower server
+ // instance) cannot hide the journey the manager just saved.
+ const pinned=useRef(new Map<string,{ship:Shipment;at:number}>());
+ // On unmount, cancel the in-flight review and forget the auto-opened journey so a
+ // remount (React StrictMode does this in development) opens it again instead of
+ // leaving a cancelled review holding `busy` forever.
+ useEffect(()=>{alive.current=true;setBusy(false);return()=>{alive.current=false;reviewId.current++;openedSaved.current=""}},[]);
+ const load=useCallback(async()=>{const request=++loadId.current;try{const [s,o]=await Promise.all([api.shipments(),api.operations()]);if(alive.current&&request===loadId.current){
+  const listed=new Set(s.shipments.map(x=>x.id));const now=Date.now();const kept:Shipment[]=[];
+  pinned.current.forEach((pin,id)=>{if(listed.has(id)||now-pin.at>120000)pinned.current.delete(id);else kept.push(pin.ship)});
+  setShips([...kept,...s.shipments].filter(x=>x.status!=="DELIVERED").sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)));setOps(o)}}catch(e){if(alive.current)setErr(String(e))}},[]);
  useEffect(()=>{if(!active)return;void load();const timer=window.setInterval(()=>{if(!document.hidden)void load()},30000);return()=>clearInterval(timer)},[active,refreshKey,load]);
- useEffect(()=>{if(savedJourney)setShips(prev=>[savedJourney,...prev.filter(s=>s.id!==savedJourney.id)])},[savedJourney]);
+ useEffect(()=>{if(savedJourney){pinned.current.set(savedJourney.id,{ship:savedJourney,at:Date.now()});setShips(prev=>[savedJourney,...prev.filter(s=>s.id!==savedJourney.id)])}},[savedJourney]);
  async function review(id:string,recalculate=true){
   if(busy)return;const request=++reviewId.current;setBusy(true);setErr("");setMsg("");setCreating(false);
   try{const saved=await api.shipment(id);const moving=!!saved.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(saved.status);const stale=moving&&(!saved.vehicle_position||Date.now()-Date.parse(saved.vehicle_position.reported_at)>900000);
