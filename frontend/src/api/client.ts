@@ -6,6 +6,7 @@ async function req<T>(p: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 export const api = {
+  journeyExamples:()=>req<{examples:import("./types").JourneyExample[]}>("/journey-examples"),
   driverUpdate:(id:string,body:{kind:"departed"|"delay"|"safe_stop"|"arrived";at?:string;reference?:string;minutes?:number;actual_cost_eur?:number})=>req<Shipment>(`/shipments/${id}/driver-update`,{method:"POST",body:JSON.stringify(body)}),
   capacity:()=>req<{records:import("./types").CapacityRecord[]}>("/capacity"),
   saveCapacity:(body:Omit<import("./types").CapacityRecord,"id"|"source">)=>req<import("./types").CapacityRecord>("/capacity",{method:"POST",body:JSON.stringify(body)}),
@@ -44,7 +45,7 @@ export const api = {
   highValue: () => req<{ shipments: HighValue[] }>("/high-value"),
   relations: () => req<{ relations: RelationStat[] }>("/analytics/relations"),
   disruptions: () => req<{ active_operational: unknown[]; historical: Disruption[] }>("/disruptions"),
-  route: (body: { origin: string; destination: string; depart_at?: string; weight_kg?: number; required_delivery?: string; value_eur?: number; optimization?:string; truck?:TruckProfile }) =>
+  route: (body: { origin: string; destination: string; depart_at?: string; weight_kg?: number; required_delivery?: string; value_eur?: number; optimization?:string; truck?:TruckProfile; sample_id?:string; sample_weather?:boolean }) =>
     req<RouteResp>("/route", { method: "POST", body: JSON.stringify(body) }),
   shipments: (q = "") => req<{ shipments: Shipment[] }>(`/shipments${q}`),
   shipment: (id: string) => req<Shipment>(`/shipments/${id}`),

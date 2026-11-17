@@ -201,6 +201,7 @@ export function chooseDiversion(
   let best: Diversion | null = null;
   options.forEach((candidate, index) => {
     if (candidate === active) return;
+    if (candidate.capacity?.feasible === false || candidate.avoidance_status === "IMPACTED" || candidate.avoidance_status === "NO_CLEAR_DETOUR") return;
     const geometry = candidate.geometry as LngLat[] | null | undefined;
     if (!geometry || geometry.length < 2) return;
     const cum = cumulativeKm(geometry);

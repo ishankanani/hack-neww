@@ -3,13 +3,13 @@ import type maplibregl from "maplibre-gl";
 import { Car, CloudSun, Expand, LocateFixed, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { MapConditions } from "../api/types";
-import { dt } from "../lib";
+import { dt, hm } from "../lib";
 import type { LiveMapProps } from "./LiveMap";
 import { loadGoogleMaps, GOOGLE_MAP_ID } from "./googleMapsApi";
 import { googleMarker, googlePath, googlePosition, googleWeatherSurface } from "./googleWeatherSurface";
 import type { WeatherMapSurface } from "./WeatherMapSurface";
 import { MapWeatherSimulation } from "./MapWeatherSimulation";
-import { routePointForIncident } from "./mapRouteGeometry";
+import { routePointForIncident, alternativeColor, alternativeLabelPoint } from "./mapRouteGeometry";
 import { TRUCK_GLYPH } from "./truckGlyph";
 import "../google-maps.css";
 
@@ -51,6 +51,8 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   const coords = sim?.engaged && sim.activeCoords?.length ? sim.activeCoords : planned;
   const roadKey = useMemo(() => JSON.stringify(coords), [coords]);
   const conditionsKey = useMemo(() => JSON.stringify(planned), [planned]);
+  const cameraKey = JSON.stringify([planned[0], planned[planned.length - 1]]);
+  const dataGeometry = useRef("");
   const forecasts = offset === -1 && routeWeather.length ? routeWeather : data?.weather ?? EMPTY;
   const choose = useRef(onSelect); choose.current = onSelect;
   const lastFit = useRef("");
@@ -80,32 +82,34 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   const fit = useCallback(() => {
     const native = map.current, maps = sdk.current;
     if (!native || !maps || planned.length < 2) return;
-    const bounds = new maps.LatLngBounds(); googlePath(planned).forEach(point => bounds.extend(point));
+    const bounds = new maps.LatLngBounds();
+    [planned, ...alternatives.flatMap(o => o.geometry?.length ? [o.geometry] : [])].forEach(road => googlePath(road).forEach(point => bounds.extend(point)));
     native.fitBounds(bounds, 42);
     maps.event.addListenerOnce(native, "idle", () => { if ((native.getZoom() ?? 5) > 10) native.setZoom(10); });
-  }, [planned]);
+  }, [planned, alternatives]);
   useEffect(() => {
-    const key = `${conditionsKey}:${layout}`;
-    if (ready && lastFit.current !== key) { lastFit.current = key; fit(); }
-  }, [ready, conditionsKey, fit, layout]);
+    if (ready && container.current?.clientWidth && lastFit.current !== cameraKey) { lastFit.current = cameraKey; fit(); }
+  }, [ready, cameraKey, fit, layout]);
   useEffect(() => { map.current?.setMapTypeId(mapType); }, [mapType, ready]);
 
   useEffect(() => {
     if (demo) { setData(null); setLoading(false); return; }
-    let alive = true; setLoading(true); setData(null); setConditionsError("");
+    let alive = true; setLoading(true); setConditionsError("");
+    if (dataGeometry.current !== conditionsKey) { setData(null); dataGeometry.current = conditionsKey; }
     api.mapConditions(JSON.parse(conditionsKey), new Date(Date.now() + Math.max(0, offset) * 3600000).toISOString())
       .then(value => { if (alive) setData(value); })
       .catch(e => { if (alive) setConditionsError(String(e)); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [conditionsKey, offset, tick, demo]);
-  useEffect(() => { const timer = window.setInterval(() => setTick(t => t + 1), 120000); return () => clearInterval(timer); }, []);
+  useEffect(() => { const timer = window.setInterval(() => { if (!document.hidden && container.current?.offsetParent) setTick(t => t + 1); }, 120000); return () => clearInterval(timer); }, []);
 
   // Native polylines retain the same road geometries and route selection logic.
   useEffect(() => {
     const maps = sdk.current, native = map.current;
     if (!ready || !maps || !native) return;
     const lines: google.maps.Polyline[] = [];
+    const labels: google.maps.marker.AdvancedMarkerElement[] = [];
     function line(points: number[][], color: string, width: number, opacity: number, z: number, dashed = false) {
       if (points.length < 2) return null;
       const item = new maps!.Polyline({ map: native, path: googlePath(points), strokeColor: color, strokeWeight: width,
@@ -116,8 +120,19 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
     line(completedGeometry, "#7f8a92", 5, .7, 2);
     alternatives.forEach((option, i) => {
       if (!option.geometry?.length || JSON.stringify(option.geometry) === roadKey) return;
-      const item = line(option.geometry, "#82909c", 5, .6, 3);
+      line(option.geometry, "#ffffff", 13, .9, 2);
+      const color = alternativeColor(i);
+      const item = line(option.geometry, color, 9, .85, 3);
       item?.addListener("click", () => choose.current?.(i));
+      const point = alternativeLabelPoint(option.geometry, planned);
+      if (point) {
+        const button = document.createElement("button"); button.className = "google-route-label";
+        button.style.setProperty("--route-color", color); button.textContent = `${i + 1} · ${hm(option.total_minutes)}`;
+        button.setAttribute("aria-label", `View route option ${i + 1}: ${option.label}`);
+        button.addEventListener("click", () => choose.current?.(i));
+        const marker = googleMarker(maps, native, googlePosition(point), button, button.getAttribute("aria-label")!);
+        marker.zIndex = 40 + i; labels.push(marker);
+      }
     });
     comparisonGeometry?.forEach(points => line(points, "#d86135", 5, .85, 4, true));
     line(coords, "#17765e", 6, 1, 6);
@@ -129,7 +144,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
       });
     });
     if (sim?.ghostCoords) line(sim.ghostCoords, "#82909c", 4, .75, 5, true);
-    return () => lines.forEach(item => { maps.event.clearInstanceListeners(item); item.setMap(null); });
+    return () => { lines.forEach(item => { maps.event.clearInstanceListeners(item); item.setMap(null); }); labels.forEach(marker => { marker.map = null; }); };
   }, [ready, roadKey, coords, alternatives, completedGeometry, comparisonGeometry, trafficSections, traffic, offset, sim?.ghostCoords]);
 
   // Facility, forecast and route-only incident markers use Google's native marker API.
@@ -217,7 +232,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
       <div ref={container} className="google-map-canvas" aria-label="Google Maps journey map" />
       {!ready && !error && <div className="google-map-loading" role="status">Loading Google Maps…</div>}
     </MapWeatherSimulation>
-    <div className="map-legend"><span><i style={{ background: "#17765e" }} />Selected route</span><span><i style={{ background: "#82909c" }} />Alternatives · click to compare</span><span><i style={{ background: "#de7043" }} />Traffic on route</span>{weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} />Simulated weather</span>}{!!completedGeometry.length && <span>Grey · completed road</span>}</div>
+    <div className="map-legend"><span><i style={{ background: "#17765e" }} />Selected route</span>{alternatives.map((option,i) => option.geometry?.length && JSON.stringify(option.geometry)!==roadKey ? <button key={option.route_id ?? i} onClick={()=>choose.current?.(i)} aria-label={`View route option ${i+1}`}><i style={{background:alternativeColor(i)}}/>Option {i+1}</button> : null)}<span><i style={{ background: "#de7043" }} />Traffic on route</span>{weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} />Simulated weather</span>}{!!completedGeometry.length && <span>Grey · completed road</span>}</div>
     <details className="weather-readout"><summary>Weather along the route · {forecasts.filter(w => w.status === "FORECAST").length} forecast samples</summary>{forecasts.map((w, i) => <div key={`${w.id}-${i}`}><span>{w.condition ?? w.status} · {w.temperature_c ?? "—"}°C</span><span>{dt(w.valid_at)} · wind {w.wind_kmh ?? "—"} km/h</span></div>)}</details>
   </div>;
 }

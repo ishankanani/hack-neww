@@ -39,7 +39,8 @@ export interface RouteOption {
 export interface Savings { money_eur: number; fuel_l: number; time_min: number; note: string; }
 export interface WeatherObs { node: string; name?: string; observed?: boolean; temp_c?: number; wind_kmh?: number; status: string; error?: string; }
 export interface Provider { key: string; name: string; status: string; configured: boolean; kind: string; last_success: string | null; last_attempt: string | null; data_timestamp: string | null; error: string | null; }
-export interface RouteResp { revision?: number; options: RouteOption[]; recommended: number | null; savings: Savings | null; weather: WeatherObs[]; providers: Provider[]; evaluated_at: string; }
+export interface RouteResp { revision?: number; options: RouteOption[]; recommended: number | null; savings: Savings | null; weather: WeatherObs[]; providers: Provider[]; evaluated_at: string; sample?: {id:string;title:string;weather_applied:boolean}|null; weather_zones?:WeatherZone[]; }
+export interface JourneyExample { id:string; title:string; description:string; weather_zone_count:number; request:{origin:string;destination:string;depart_at:string;required_delivery:string;weight_kg:number;value_eur:number;optimization:string}; }
 
 export interface Shipment {
   simulation_used?:boolean;
