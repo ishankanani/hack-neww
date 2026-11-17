@@ -17,7 +17,7 @@ export interface Incident { id:string; geometry:{type:string;coordinates: number
 export interface MapConditions { weather:LiveWeather[]; incidents:{status:string;items:Incident[];fetched_at?:string}; traffic_configured:boolean; at:string; fetched_at:string; }
 export interface TruckProfile { height_m:number; width_m:number; length_m:number; gross_weight_kg:number; }
 export interface RouteOption {
-  road_legs?: {from:string;to:string;departure?:string;arrival?:string}[];
+  road_legs?: {from:string;to:string;departure?:string;arrival?:string;source?:string;km?:number}[];
   route_feasible?:boolean;unavailable_reasons?:string[];manager_requested?:boolean;
   arrival_evidence?:ArrivalEvidence;
   capacity?:CapacityEvidence;

@@ -42,7 +42,7 @@ export const api = {
   dashboard: () => req<Dashboard>("/dashboard"),
   savings: (scope:"estimated"|"demo"="estimated") => req<SavingsResp>(`/savings?scope=${scope}`),
   recalculateSavings: () => req<SavingsResp>("/savings/recalculate", { method: "POST" }),
-  simulateReroute: (body: { lat: number; lon: number; destination: string; via?: string; depart_at?: string; truck?: TruckProfile; transfer_minutes?: number; avoid_weather?: boolean }) =>
+  simulateReroute: (body: { lat: number; lon: number; destination: string; via?: string; depart_at?: string; truck?: TruckProfile; transfer_minutes?: number; avoid_weather?: boolean; avoid_points?: {lat:number;lon:number;radius_km:number}[] }) =>
     req<RerouteResp>("/simulate/reroute", { method: "POST", body: JSON.stringify(body) }),
   highValue: () => req<{ shipments: HighValue[] }>("/high-value"),
   relations: () => req<{ relations: RelationStat[] }>("/analytics/relations"),

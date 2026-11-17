@@ -55,7 +55,9 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
  const requestId=useRef(0);const lastBody=useRef<Parameters<typeof api.route>[0]|null>(null);
  const running=useRef(false),mounted=useRef(true),latestBody=useRef("");
  const preferClear=useRef(false);
- const pendingRefresh=useRef(false);const latestGo=useRef<(automatic?:boolean)=>Promise<void>>(async()=>{});
+ const pendingRefresh=useRef(false);const autoRun=useRef(false);
+ // Sample results are reused for 5 minutes so switching between samples is instant.
+ const sampleCache=useRef(new Map<string,{at:number;r:Awaited<ReturnType<typeof api.route>>}>());const latestGo=useRef<(automatic?:boolean)=>Promise<void>>(async()=>{});
  const wantedRevision=useRef(revision);wantedRevision.current=Math.max(wantedRevision.current,revision);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;requestId.current++}},[]);
  const body=()=>({origin,destination:dest,depart_at:new Date(depart).toISOString(),required_delivery:deadline?new Date(deadline).toISOString():undefined,weight_kg:Number(weight),value_eur:value.trim()?Number(value):0,optimization,truck:truckProfile,...(sample?{sample_id:sample.id,sample_weather:sampleWeather}:{})});
@@ -66,10 +68,13 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
   const id=++requestId.current;if(automatic)setRefreshing(true);else setLoading(true);setErr("");if(!automatic)setMessage("");
   const selectedRoute=selection.current;
   let completedRevision=-1,completedKey="";
-  try{const b=body();const key=JSON.stringify(b);const r=await api.route(b);
+  try{const b=body();const key=JSON.stringify(b);
+   const hit=b.sample_id?sampleCache.current.get(key):undefined;
+   const r=hit&&Date.now()-hit.at<300000?hit.r:await api.route(b);
+   if(b.sample_id&&!(hit&&Date.now()-hit.at<300000))sampleCache.current.set(key,{at:Date.now(),r});
    completedRevision=r.revision??-1;completedKey=key;
    if(mounted.current&&id===requestId.current&&key===latestBody.current){
-    if(completedRevision<wantedRevision.current){pendingRefresh.current=true;return}
+    if(!b.sample_id&&completedRevision<wantedRevision.current){pendingRefresh.current=true;return}
     const safeIndex=r.options.findIndex(o=>(o.avoidance_status==="CLEAR"||o.avoidance_status==="NO_ZONE")&&o.capacity?.feasible!==false);
     const previousIndex=r.options.findIndex(o=>o.route_id===selection.current);
     const samePathIndex=r.options.findIndex(o=>o.route_id?.split(":")[0]===selectedRoute?.split(":")[0]);
@@ -90,6 +95,8 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
  }
 
  latestGo.current=go;
+ // Loading a sample or switching its weather preview calculates straight away; the current map stays until the new result arrives.
+ useEffect(()=>{if(autoRun.current&&sample){autoRun.current=false;void go()}},[sample,sampleWeather]);
  useEffect(()=>{let active=true;api.operations().then(r=>{if(active)setOps(r)}).catch(e=>{if(active)setErr(String(e))});return()=>{active=false}},[revision]);
  useEffect(()=>{if(resp&&(resp.revision??-1)<revision&&JSON.stringify(lastBody.current)===latestBody.current) void go(true)},[revision]);
  async function scenarioChanged(){const o=await api.operations();setOps(o);onChange();if(!resp)await go()}
@@ -102,7 +109,7 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
   finally{await weatherChanged(false)}
  }
  async function save(recommended=false){if(inputInvalid)return;setSaving(true);setErr("");try{const b=lastBody.current;if(!b)throw Error("Calculate a route first");const chosen=resp?.options[recommended?(resp.recommended??0):selected];const ship=await api.createShipment({...b,planned_departure:b.depart_at,selected_path:chosen?.path,selected_route_id:chosen?.route_id});onSaved?.(ship);setMessage(`${ship.id} saved. It is listed below and in the control room review queue.`);setSaveTick(n=>n+1);onChange()}catch(e){setErr(String(e))}finally{setSaving(false)}}
- function loadExample(example:JourneyExample){requestId.current++;const r=example.request;setSample(example);setSampleWeather(false);setOrigin(r.origin);setDest(r.destination);setDepart(localInput(new Date(r.depart_at)));setDeadline(localInput(new Date(r.required_delivery)));setWeight(String(r.weight_kg));setValue(String(r.value_eur));setOptimization(r.optimization);setResp(null);setMessage("");setErr("")}
+ function loadExample(example:JourneyExample){requestId.current++;const r=example.request;setSample(example);setSampleWeather(false);setOrigin(r.origin);setDest(r.destination);setDepart(localInput(new Date(r.depart_at)));setDeadline(localInput(new Date(r.required_delivery)));setWeight(String(r.weight_kg));setValue(String(r.value_eur));setOptimization(r.optimization);autoRun.current=true;setMessage("");setErr("")}
  function weekendDemo(){const next=new Date();next.setDate(next.getDate()+((6-next.getDay()+7)%7||7));next.setHours(18,0,0,0);setDepart(localInput(next));setDeadline(localInput(new Date(next.getTime()+63*3600000)));setOrigin("R16");setDest("R21");setSample(null);setSampleWeather(false);setResp(null);setMessage("")}
  const dirty=resp&&JSON.stringify(lastBody.current)!==JSON.stringify((()=>{try{return body()}catch{return null}})());
  const refreshLatest=useRef(()=>{});refreshLatest.current=()=>{if(resp&&!sample&&!dirty&&!running.current&&!saving&&!document.hidden&&plannerPanel.current?.offsetParent)void go(true)};
@@ -111,7 +118,7 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
  <section className="card planning-card" ref={plannerPanel}>
   <div className="card__h"><div><h2>Plan a journey</h2></div><button className="linkbtn" onClick={weekendDemo}>Saturday example ↗</button></div>
   <JourneyExamples disabled={loading||refreshing||saving} onLoad={loadExample}/>
-  {sample&&<div className="example-preview"><div><b>Sample simulation · {sample.title}</b><span>{sampleWeather?"Sample weather applied to this preview.":"Baseline plan. Preview the sample weather after calculating."}</span></div>{sample.weather_zone_count>0&&<label><input type="checkbox" checked={sampleWeather} disabled={loading||refreshing} onChange={e=>setSampleWeather(e.target.checked)}/>Preview weather impact</label>}<button className="linkbtn" disabled={loading||refreshing} onClick={()=>{setSample(null);setSampleWeather(false);setResp(null)}}>Exit sample</button></div>}
+  {sample&&<div className="example-preview"><div><b>Sample simulation · {sample.title}</b><span>{sampleWeather?"Sample weather applied.":"Without weather."} {(()=>{const o=resp?.options?.[0];if(!o)return null;const live=(o.live_weather??[]).filter(w=>w.status==="FORECAST").length;const t=o.traffic_status==="LIVE_OR_PREDICTED"?"live (TomTom)":"simulated — add a TomTom key for live traffic";return <>Roads: {(o.road_legs??[]).some(l=>/OSRM|TomTom/.test(l.source??""))?"live":"estimated"} · Weather forecast: {live?`live (Open-Meteo, ${live} points)`:"not available"} · Traffic: {t}</>})()}</span></div>{sample.weather_zone_count>0&&<label><input type="checkbox" checked={sampleWeather} disabled={loading||refreshing} onChange={e=>{autoRun.current=true;setSampleWeather(e.target.checked)}}/>Preview weather impact</label>}<button className="linkbtn" disabled={loading||refreshing} onClick={()=>{setSample(null);setSampleWeather(false);setResp(null)}}>Exit sample</button></div>}
   <form onSubmit={e=>{e.preventDefault();void go()}}>
    {inputInvalid&&<div className="planner-validation" role="alert"><b>Route search paused.</b> Correct the highlighted entries before calculating or selecting routes.</div>}
    <div className="plan-fields">

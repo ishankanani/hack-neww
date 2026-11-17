@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import type { NetNode, RouteOption, TruckProfile, WeatherZone } from "../api/types";
 import { dt, eur, hm } from "../lib";
 import {
-  buildPlan, snapshotAt, chooseDiversion, pointAhead, divertedCoords, abandonedCoords,
+  buildPlan, snapshotAt, chooseDiversion, pointAhead, abandonedCoords,
   flatPlan, intermediateHoldMinutes,
 } from "./simulation";
 import type { LngLat, SimPlan, SimSnapshot, Diversion } from "./simulation";
@@ -69,6 +69,7 @@ export interface Simulation {
   setDisruptReason: (s: string) => void;
   seek: (fraction: number) => void;
   rerouteWeather: () => void;
+  routeChangedWhileRunning: boolean;
   start: () => void;
   pause: () => void;
   reset: () => void;
@@ -88,7 +89,13 @@ interface Args {
   onCommitted?: () => void;
 }
 
-export function useJourneySimulation({ option, options, nodes, deadline, truck, weatherZones = [], onCommitted }: Args): Simulation {
+const ZONE_DELAY: Record<string, number> = { snow: 110, rain: 65, tornado: 180 }; // same fixed assumption as the planner
+
+export function useJourneySimulation({ option: optionProp, options, nodes, deadline, truck, weatherZones = [], onCommitted }: Args): Simulation {
+  // While a run is under way it keeps its own route; the planner may pick another
+  // route when weather changes, but the moving truck is rerouted from where it is.
+  const [option, setSimOption] = useState(optionProp);
+  const inProgress = useRef(false);
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [t, setT] = useState(0);
@@ -120,7 +127,9 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
   const originalPlan = replayPlan ?? basePlan;
   const plan = override ?? originalPlan;
 
+  const latestOption = useRef(optionProp); latestOption.current = optionProp;
   const reset = useCallback(() => {
+    inProgress.current = false; setSimOption(latestOption.current);
     setRunning(false); tRef.current = 0; setT(0); setOverride(null); setReplayPlan(null); setOffset(0);
     setBlockage(null); setGhost(null); setReroute(null); setError("");
     setCommitted(false); setBlockedEvent(false); injecting.current = false;
@@ -134,10 +143,12 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     setT(targetMin);
   }, [plan, replayPlan, basePlan]);
 
-  // Quote IDs refresh routinely; reset only for a different road, input or scenario.
-  const optionKey = useMemo(() => option ? JSON.stringify([option.path, option.depart_at, option.geometry,
-    option.zone_impacts, deadline, truck, weatherZones.map(z => [z.id, z.lon, z.lat, z.radius_km, z.start, z.end])]) : "", [option, deadline, truck, weatherZones]);
-  useEffect(() => { reset(); }, [optionKey, reset]);
+  // Quote IDs refresh routinely; reset only for a different road or input, and never in the middle of a run.
+  const optionKey = useMemo(() => optionProp ? JSON.stringify([optionProp.path, optionProp.depart_at, optionProp.geometry,
+    optionProp.zone_impacts, deadline, truck]) : "", [optionProp, deadline, truck]);
+  const zonesKey = useMemo(() => JSON.stringify(weatherZones.map(z => [z.id, z.lon, z.lat, z.radius_km, z.start, z.end])), [weatherZones]);
+  useEffect(() => { if (!inProgress.current) reset(); }, [optionKey, reset]);
+  const routeChangedWhileRunning = !!optionProp && !!option && inProgress.current && optionProp.route_id !== option.route_id;
 
   // Animation loop.
   useEffect(() => {
@@ -150,7 +161,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
       tRef.current = Math.min(plan.totalMinutes, tRef.current + delta * MINUTES_PER_SECOND * speed);
       // Readouts need 10 updates/second; the map samples this clock every frame.
       if (since >= 0.1) { since = 0; setT(tRef.current); }
-      if (tRef.current >= plan.totalMinutes) { setT(plan.totalMinutes); setRunning(false); return; }
+      if (tRef.current >= plan.totalMinutes) { setT(plan.totalMinutes); setRunning(false); inProgress.current = false; return; }
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -165,86 +176,74 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
   }, [plan, running]);
 
   const inject = useCallback(async (customMinutes?: number, customReason?: string) => {
-    if (!plan || !option || injecting.current || override) return;
-    injecting.current = true;
+    if (!plan || !option || injecting.current) return;
+    injecting.current = true; inProgress.current = true;
     if (!replayPlan && basePlan) setReplayPlan(basePlan);
     setBusy(true); setRunning(false); setT(tRef.current); setError("");
     const mins = customMinutes ?? disruptMinutes;
     const reason = customReason ?? disruptReason;
     const here = snapshotAt(plan, tRef.current);
     const position = here.position;
-    setBlockage({
-      position: pointAhead(plan, here.km),
-      minutes: mins,
-      reason: `${reason} (+${mins}m)`,
-    });
+    const blockedSpot = pointAhead(plan, here.km);
+    setBlockage({ position: blockedSpot, minutes: mins, reason: `${reason} (+${mins}m)` });
     try {
-      const diversion: Diversion | null = chooseDiversion(
-        position, here.remainingKm, option, options, mins);
+      // Option 1: stay on the planned road and absorb the delay.
       const etaIfStayed = here.clock + (here.remainingKm / plan.kmPerMin + mins) * 60000;
+      const perKmEur = option.cost.transport_eur / Math.max(1, option.cost.distance_km);
+      const perKmFuel = option.cost.fuel_l / Math.max(1, option.cost.distance_km);
+      const avoid = [{ lat: blockedSpot[1], lon: blockedSpot[0], radius_km: 2 }];
+      // Option 2: a fresh road from the truck's position around the blocked spot (and active weather).
+      // Option 3: the via-hub corridor of another planned option, if one is close.
+      const diversion: Diversion | null = chooseDiversion(position, here.remainingKm, option, options, mins);
+      const via = diversion && diversion.option.path.length > 2 ? diversion.option.path[1] : null;
+      const asks = [{ via: undefined as string | undefined, transfer: 0 }, ...(via ? [{ via, transfer: Math.round(intermediateHoldMinutes(diversion!.option)) }] : [])];
+      const plainAsk = api.simulateReroute({ lat: position[1], lon: position[0], destination: option.destination,
+        depart_at: new Date(here.clock).toISOString(), truck });
+      const [plainResult, ...results] = await Promise.allSettled([plainAsk, ...asks.map(q => api.simulateReroute({
+        lat: position[1], lon: position[0], destination: option.destination, via: q.via, transfer_minutes: q.transfer,
+        depart_at: new Date(here.clock).toISOString(), truck, avoid_weather: true, avoid_points: avoid,
+      }))]);
+      // Compare like with like: the same road model for staying (plain road + delay) and for every way around.
+      const plain = plainResult.status === "fulfilled" && plainResult.value.status !== "UNAVAILABLE" ? plainResult.value : null;
+      const etaStay = plain ? here.clock + (plain.total_minutes + mins) * 60000 : etaIfStayed;
+      const candidates = results.flatMap((r, i) => r.status === "fulfilled" && r.value.status !== "UNAVAILABLE" && r.value.geometry && r.value.geometry.length > 1
+        ? [{ live: r.value, via: asks[i].via ?? null }] : []);
+      const best = candidates.sort((x, y) => x.live.total_minutes - y.live.total_minutes)[0];
+      const etaBest = best ? here.clock + best.live.total_minutes * 60000 : Infinity;
 
-      if (!diversion) {
+      if (!best || etaBest >= etaStay) {
         const remaining = abandonedCoords(plan, here.km);
-        const minutes = here.remainingKm / plan.kmPerMin + mins;
-        const held = flatPlan([position, ...remaining.slice(1)], minutes, here.clock,
-          `Holding on the planned corridor · +${mins}m congestion absorbed`, plan.approximate);
-        if (held) {
-          setOffset(tRef.current); tRef.current = 0; setT(0); setOverride(held);
-        }
+        const held = flatPlan([position, ...remaining.slice(1)], here.remainingKm / plan.kmPerMin + mins, here.clock,
+          `Staying on the planned road · +${mins}m delay absorbed`, plan.approximate);
+        if (held) { setOffset(o => o + tRef.current); tRef.current = 0; setT(0); setOverride(held); }
         setReroute({
-          diverted: false, minutesAvoided: 0, costDeltaEur: 0, fuelDeltaL: 0,
-          etaIfStayed, etaNow: etaIfStayed, viaName: null, connectorKm: 0,
-          source: "No alternative corridor improves on the planned route",
+          diverted: false, minutesAvoided: 0, costDeltaEur: 0, fuelDeltaL: 0, etaIfStayed: etaStay, etaNow: etaStay, viaName: null, connectorKm: 0,
+          source: best ? `Staying is fastest: the best way around arrives ${Math.round((etaBest - etaStay) / 60000)} min later` : "No road around the blocked spot was found from this position",
           approximate: plan.approximate,
         });
         return;
       }
-
-      const via = diversion.option.path.length > 2 ? diversion.option.path[1] : null;
-      let coords = divertedCoords(position, diversion);
-      let minutes = diversion.viaMinutes;
-      let source = "Approximate connector to the alternative corridor";
-      let approximate = true;
-
-      try {
-        const live = await api.simulateReroute({
-          lat: position[1], lon: position[0],
-          destination: option.destination, via: via ?? undefined,
-          depart_at: new Date(here.clock).toISOString(), truck,
-          transfer_minutes: via ? Math.round(intermediateHoldMinutes(diversion.option)) : 0,
-        });
-        if (live.status !== "UNAVAILABLE" && live.geometry && live.geometry.length > 1) {
-          coords = live.geometry as LngLat[];
-          minutes = live.total_minutes;
-          source = live.source;
-          approximate = live.status !== "ROUTED";
-        }
-      } catch (e) {
-        setError(`Live re-route unavailable (${String(e)}). Showing an approximate diversion.`);
-      }
-
-      const next = flatPlan(coords, minutes, here.clock,
-        via
-          ? `Re-routed via ${nodes.find((n) => n.id === via)?.name ?? via} · includes transfer dwell at that facility`
-          : "Re-routed around the blockage",
-        approximate);
+      const live = best.live;
+      const next = flatPlan(live.geometry as LngLat[], live.total_minutes, here.clock,
+        best.via ? `Rerouted via ${nodes.find(n => n.id === best.via)?.name ?? best.via} around the blocked road · includes transfer time` : "Rerouted around the blocked road from the truck's position",
+        live.status !== "ROUTED");
       if (!next) { setError("Could not build a diversion from this position."); return; }
-
+      const deltaKm = live.distance_km - (plain?.distance_km ?? here.remainingKm);
       setGhost(abandonedCoords(plan, here.km));
-      setOffset(tRef.current); tRef.current = 0; setT(0); setOverride(next);
+      setOffset(o => o + tRef.current); tRef.current = 0; setT(0); setOverride(next);
       setBlockedEvent(true);
       setReroute({
-        diverted: true,
-        minutesAvoided: Math.round((etaIfStayed - (here.clock + minutes * 60000)) / 60000),
-        costDeltaEur: diversion.costDeltaEur, fuelDeltaL: diversion.fuelDeltaL,
-        etaIfStayed, etaNow: here.clock + minutes * 60000,
-        viaName: via ? nodes.find((n) => n.id === via)?.name ?? via : null,
-        source, approximate, connectorKm: diversion.connectorKm,
+        diverted: true, minutesAvoided: Math.round((etaStay - etaBest) / 60000),
+        costDeltaEur: Math.round(deltaKm * perKmEur), fuelDeltaL: Math.round(deltaKm * perKmFuel),
+        etaIfStayed: etaStay, etaNow: etaBest, viaName: best.via ? nodes.find(n => n.id === best.via)?.name ?? best.via : null,
+        source: `${live.source} · best of ${candidates.length + 1} options (including staying)`, approximate: live.status !== "ROUTED", connectorKm: 0,
       });
+    } catch (e) {
+      setError(`Reroute unavailable (${String(e)}). The truck stays on the planned road.`);
     } finally {
-      setBusy(false); injecting.current = false;
+      setBusy(false); injecting.current = false; setRunning(true);
     }
-  }, [plan, option, options, override, nodes, truck, disruptMinutes, disruptReason, replayPlan, basePlan]);
+  }, [plan, option, options, nodes, truck, disruptMinutes, disruptReason, replayPlan, basePlan]);
 
   // Automatic blockage only if enabled
   useEffect(() => {
@@ -252,11 +251,12 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     if (plan.totalMinutes && t / plan.totalMinutes >= AUTO_TRIGGER_AT) void inject();
   }, [t, running, override, plan, inject, autoDisrupt]);
 
-  const rerouteWeather = useCallback(async () => {
-    if (!plan || !option || busy || injecting.current || override) return;
-    const impacts=option.zone_impacts ?? [];
-    if (!impacts.length) { setError("Select a route affected by a simulated weather zone first."); return; }
-    injecting.current=true; setBusy(true); setRunning(false); setError("");
+  const rerouteWeather = useCallback(async (auto = false) => {
+    if (!plan || !option || injecting.current) return;
+    const impacts=auto ? weatherZones.map(z=>({id:z.id,delay_minutes:ZONE_DELAY[z.kind]??0})) : option.zone_impacts ?? [];
+    if (!impacts.length) { if(!auto) setError("Select a route affected by a simulated weather zone first."); return; }
+    const wasRunning=running;
+    injecting.current=true; inProgress.current=true; setBusy(true); setRunning(false); setError("");
     if (!replayPlan && basePlan) setReplayPlan(basePlan);
     const here=snapshotAt(plan,tRef.current);
     const delay=Math.max(...impacts.map(z=>z.delay_minutes));
@@ -267,11 +267,14 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     const hubArrival=hub?Math.min(...option.steps.filter(s=>s.location===hub).map(s=>Date.parse(s.start))):Infinity;
     const via=hub&&here.clock<hubArrival?hub:undefined;
     try {
-      const live=await api.simulateReroute({
+      const ask=(avoid:boolean)=>api.simulateReroute({
         lat:here.position[1],lon:here.position[0],destination:option.destination,
         via,transfer_minutes:via?Math.round(intermediateHoldMinutes(option)):0,
-        depart_at:new Date(here.clock).toISOString(),truck,avoid_weather:true,
+        depart_at:new Date(here.clock).toISOString(),truck,avoid_weather:avoid,
       });
+      const [live,plain]=await Promise.all([ask(true),ask(false).catch(()=>null)]);
+      // Same road model on both sides: the plain road plus the weather delay, against the clear road.
+      const etaStay=plain&&plain.status!=="UNAVAILABLE"?here.clock+(plain.total_minutes+delay)*60000:etaIfStayed;
       if (live.status==="UNAVAILABLE" || !live.geometry || live.geometry.length<2 || live.weather_clear===false) {
         const note=live.note || "No verified clear road is available from the simulated truck position. Hold and request manager review.";
         setBlockage({position:hazardPosition,minutes:delay,reason:`Weather hold · ${delay}m assumed`});
@@ -279,23 +282,35 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
         setError(note); return;
       }
       if (!live.weather_detours?.length) {
-        setError("No active simulated weather zone intersects the remaining road from this position.");
+        // The weather does not touch the road still ahead: keep driving.
+        if(!auto) setError("No active simulated weather zone intersects the remaining road from this position.");
+        if(auto&&wasRunning) setRunning(true);
         return;
       }
       const next=flatPlan(live.geometry as LngLat[],live.total_minutes,here.clock,
         via?"Local weather detour via the planned transfer hub":"Local weather detour from the simulated truck position",live.status!=="ROUTED");
       if (!next) { setError("Could not build a weather-clear route from this position."); return; }
-      const deltaKm=live.distance_km-here.remainingKm;
+      const deltaKm=live.distance_km-(plain&&plain.status!=="UNAVAILABLE"?plain.distance_km:here.remainingKm);
       const costDelta=Math.round(deltaKm*(option.cost.transport_eur/Math.max(1,option.cost.distance_km)));
       const fuelDelta=Math.round(deltaKm*(option.cost.fuel_l/Math.max(1,option.cost.distance_km)));
       const etaNow=here.clock+live.total_minutes*60000;
       setBlockage({position:hazardPosition,minutes:delay,reason:`Simulated weather ahead · ${delay}m assumed`});
-      setGhost(abandonedCoords(plan,here.km));setOffset(tRef.current);tRef.current=0;setT(0);setOverride(next);
-      setReroute({diverted:true,minutesAvoided:Math.round((etaIfStayed-etaNow)/60000),costDeltaEur:costDelta,fuelDeltaL:fuelDelta,etaIfStayed,etaNow,viaName:via?nodes.find(n=>n.id===via)?.name??via:null,source:live.source,approximate:live.status!=="ROUTED",connectorKm:0});
+      setGhost(abandonedCoords(plan,here.km));setOffset(o=>o+tRef.current);tRef.current=0;setT(0);setOverride(next);
+      setReroute({diverted:true,minutesAvoided:Math.round((etaStay-etaNow)/60000),costDeltaEur:costDelta,fuelDeltaL:fuelDelta,etaIfStayed:etaStay,etaNow,viaName:via?nodes.find(n=>n.id===via)?.name??via:null,source:(auto?"Automatic reroute after new weather · ":"")+live.source,approximate:live.status!=="ROUTED",connectorKm:0});
+      if(auto||wasRunning) setRunning(true);
     } catch (e) {
       setError(`Weather reroute failed: ${String(e)}. Keep the current plan on hold for manager review.`);
     } finally { setBusy(false); injecting.current=false; }
-  },[plan,option,truck,busy,override,weatherZones,nodes,replayPlan,basePlan]);
+  },[plan,option,truck,running,weatherZones,nodes,replayPlan,basePlan]);
+
+  // New or moved weather during a run: reroute the moving truck from where it is.
+  const seenZones = useRef(zonesKey);
+  useEffect(() => {
+    if (zonesKey === seenZones.current) return;
+    seenZones.current = zonesKey;
+    if (inProgress.current && plan && tRef.current < plan.totalMinutes) void rerouteWeather(true);
+    else if (!inProgress.current) reset();
+  }, [zonesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const commit = useCallback(async () => {
     if (!blockedEvent || committed) return;
@@ -337,7 +352,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
     followTruck, setFollowTruck,
     disruptMinutes, setDisruptMinutes,
     disruptReason, setDisruptReason,
-    seek, rerouteWeather: () => { void rerouteWeather(); },
+    seek, rerouteWeather: () => { void rerouteWeather(); }, routeChangedWhileRunning,
     skipHold: () => {
       if (!plan) return;
       if (!replayPlan && basePlan) setReplayPlan(basePlan);
@@ -356,6 +371,7 @@ export function useJourneySimulation({ option, options, nodes, deadline, truck, 
       }
     },
     start: () => {
+      inProgress.current = true;
       if (!replayPlan && basePlan) setReplayPlan(basePlan);
       if (plan && tRef.current >= plan.totalMinutes) {
         tRef.current = 0;
@@ -524,6 +540,7 @@ export function JourneySimulator({ sim, showCommit = true, showWeatherReroute = 
         </div>
       )}
 
+      {sim.routeChangedWhileRunning && <div role="status" className="notice notice--info">This simulation keeps its own route while it runs. Press Reset to simulate the route you just selected.</div>}
       {sim.error && <div role="alert" className="notice notice--warn">{sim.error}</div>}
       <p className="sim-foot">
         <ShieldCheck size={13} /> Replay of the plan at start · {MINUTES_PER_SECOND * sim.speed} min/sec · Includes stops and rest periods.

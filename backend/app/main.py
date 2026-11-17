@@ -794,6 +794,14 @@ class RerouteReq(BaseModel):
     truck: TruckReq = Field(default_factory=TruckReq)
     transfer_minutes: int = Field(default=0, ge=0, le=1440)
     avoid_weather: bool = False
+    avoid_points: list[dict] = Field(default_factory=list, max_length=10)  # blocked road spots: {lat, lon, radius_km}
+
+    @model_validator(mode="after")
+    def check_points(self):
+        for p in self.avoid_points:
+            if not (-85 <= float(p.get("lat", 999)) <= 85 and -180 <= float(p.get("lon", 999)) <= 180 and 0.5 <= float(p.get("radius_km", 2)) <= 30):
+                raise ValueError("Invalid blocked road position")
+        return self
 
 
 @app.post("/api/simulate/reroute")
@@ -808,7 +816,7 @@ def simulate_reroute_endpoint(req: RerouteReq):
         raise HTTPException(422, "Intermediate facility equals destination")
     return simulate_reroute(_ctx(), req.lat, req.lon, req.destination, req.via,
                             _parse(req.depart_at) if req.depart_at else None,
-                            req.truck.model_dump(), req.transfer_minutes, req.avoid_weather)
+                            req.truck.model_dump(), req.transfer_minutes, req.avoid_weather, req.avoid_points)
 
 
 @app.get("/api/traffic-tiles/{z}/{x}/{y}.png")
