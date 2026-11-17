@@ -940,7 +940,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
       </div>
       {data?.incidents.status === "ERROR" && <div className="map-note">Traffic incidents could not be refreshed. Coverage may be incomplete.</div>}
       {fallback && webglAvailable && <div className="map-note">Road-map tiles are temporarily unavailable. <button className="linkbtn" onClick={() => { failedBasemaps.current.clear(); baseTileFailures.current = { count: 0, since: 0 }; setBasemap("osm"); setError(""); setFallback(false); }}>Retry road map</button></div>}
-      {error && <div role="alert" className="map-note">{error}</div>}
+      {error && !(fallback && webglAvailable) && <div role="alert" className="map-note">{error}</div>}
       <RouteWeatherReadout forecasts={forecasts}/>
       {showKeyModal && (
         <div className="key-modal-overlay" onClick={() => setShowKeyModal(false)}>
