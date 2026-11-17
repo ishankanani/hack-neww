@@ -89,9 +89,16 @@ app = FastAPI(title="DACHSER Live Transit Planner", version="3.0.0", lifespan=li
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(map_tiles_router)
 
+STATELESS_PATHS=("/api/map-tiles/","/api/health")
+
+
 @app.middleware("http")
 async def fresh_api_responses(request,call_next):
-    if persistence.configured() and (request.method=="GET" or request.url.path=="/api/route"):
+    # Map tiles and health checks never read journey state. Refreshing it for them
+    # would cost a database connection and the global lock per tile, and a
+    # storage outage would blank the map and fail health checks.
+    stateless=request.url.path.startswith(STATELESS_PATHS)
+    if persistence.configured() and not stateless and (request.method=="GET" or request.url.path=="/api/route"):
         from starlette.concurrency import run_in_threadpool
         try:await run_in_threadpool(refresh_shared_state)
         except persistence.StorageUnavailable as exc:

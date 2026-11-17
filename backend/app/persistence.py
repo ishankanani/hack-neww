@@ -55,6 +55,10 @@ def session(write=False):
                     # Serializes approvals and capacity reservations across server instances.
                     connection.execute("SELECT pg_advisory_xact_lock(684918257)")
                 yield
+                # Commit explicitly. psycopg's context manager silently skips the
+                # commit when the connection is already closed, which would report
+                # a save that never happened; commit() raises in that case instead.
+                connection.commit()
             except BaseException:
                 # A rolled-back request may already have changed the worker's
                 # in-memory objects; force their next read back from Postgres.
@@ -64,6 +68,10 @@ def session(write=False):
                 _writing.reset(write_token)
                 _connection.reset(token)
     except psycopg.Error:
+        # The failure may come from the commit itself, after save() already
+        # recorded a version that never landed. Forget every cached version so
+        # the next read reloads committed state instead of trusting memory.
+        _versions.clear()
         raise StorageUnavailable("Shared storage could not complete this request. No successful save was confirmed; please try again.") from None
 
 
