@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "title": "DACHSER Live Transit Planner — sample journey dataset",
+  "purpose": "End-to-end test journeys. Each one drives a single truck from origin to destination through the real API: plan, approve, depart, move along the road, meet simulated weather, re-plan, deliver.",
+  "honesty_note": "Weather zones and vehicle positions in this dataset are SIMULATED and are labelled as such by the backend (source SIMULATION / MANUAL MAP SIMULATION). Road geometry, lanes, tariffs, holidays and driving bans come from the real providers and the real DACHSER CSVs.",
+  "timing_note": "All times are relative to the moment the runner starts, so this dataset never goes stale.",
+  "journeys": [
+    {
+      "id": "J1-clear-run",
+      "title": "Clear run — Karlsruhe to Nurnberg",
+      "what_it_proves": "The happy path end to end: plan, approve, depart, move along real road geometry, arrive, record the actual outcome. No disruption.",
+      "expect": "One approved route, steady progress to 100 percent, status DELIVERED, an actual-vs-planned outcome recorded.",
+      "shipment": {
+        "origin": "R16",
+        "destination": "R10",
+        "weight_kg": 12000,
+        "value_eur": 45000,
+        "container": "C-DEMO-J1",
+        "customer_segment": "Standard",
+        "optimization": "fastest",
+        "depart_in_minutes": 20,
+        "deliver_in_hours": 20
+      },
+      "weather_zones": [],
+      "script": [
+        0,
+        10,
+        22,
+        35,
+        48,
+        60,
+        72,
+        85,
+        94,
+        100
+      ]
+    },
+    {
+      "id": "J2-snow-reroute",
+      "title": "Heavy snow on the A9 corridor forces a verified detour",
+      "what_it_proves": "Live monitoring and automatic rerouting. The truck departs on a clear route; snow appears ahead near Hof; the system flags the approved route as impacted, finds a road-verified detour that clears the zone, the manager approves it, and the truck continues to delivery on the new road.",
+      "expect": "After the zone is injected the current route becomes IMPACTED, a replan returns a CLEAR option, the decision is accepted, and the journey completes on the detour.",
+      "shipment": {
+        "origin": "R16",
+        "destination": "R21",
+        "weight_kg": 18000,
+        "value_eur": 180000,
+        "container": "C-DEMO-J2",
+        "customer_segment": "Top",
+        "optimization": "fastest",
+        "depart_in_minutes": 20,
+        "deliver_in_hours": 44
+      },
+      "weather_zones": [
+        {
+          "kind": "snow",
+          "radius_km": 30,
+          "place_at_route_fraction": 0.62,
+          "reference_point": {
+            "lat": 50.2277,
+            "lon": 11.7795,
+            "where": "A9 near Hof, sampled from captured OSRM geometry"
+          },
+          "inject_at_progress": 22,
+          "from_minutes": -90,
+          "to_minutes": 900,
+          "note": "Heavy snow band over the Thuringen / Hof stretch of the A9"
+        }
+      ],
+      "script": [
+        0,
+        8,
+        15,
+        22,
+        30,
+        42,
+        55,
+        68,
+        80,
+        90,
+        97,
+        100
+      ]
+    },
+    {
+      "id": "J3-high-value-weekend",
+      "title": "810k EUR shipment driving into the Sunday truck ban",
+      "what_it_proves": "Pre-shipment risk plus the legal restriction engine. A high-value Saturday-evening departure with a Monday-morning deadline: the drive crosses into Sunday, so the planner must add the real ban waiting time rather than a flat penalty, score the risk, and warn before the shipment is scheduled.",
+      "expect": "Legal waiting time visible in the ETA, an arrival pushed into Monday, risk MEDIUM or HIGH with stated reasons, and a deadline warning if the window cannot be met.",
+      "shipment": {
+        "origin": "R16",
+        "destination": "R21",
+        "weight_kg": 21000,
+        "value_eur": 810000,
+        "container": "C-DEMO-J3",
+        "customer_segment": "Top",
+        "optimization": "balanced",
+        "depart_next_weekday": 6,
+        "depart_at_local_hour": 18,
+        "deliver_next_weekday": 1,
+        "deliver_at_local_hour": 9
+      },
+      "weather_zones": [
+        {
+          "kind": "rain",
+          "radius_km": 20,
+          "place_at_route_fraction": 0.45,
+          "reference_point": {
+            "lat": 49.4244,
+            "lon": 11.2085,
+            "where": "A9 near Nurnberg, sampled from captured OSRM geometry"
+          },
+          "inject_at_progress": 18,
+          "from_minutes": -60,
+          "to_minutes": 720,
+          "note": "Persistent heavy rain around the Nurnberg interchange"
+        }
+      ],
+      "script": [
+        0,
+        9,
+        18,
+        28,
+        40,
+        52,
+        65,
+        78,
+        88,
+        96,
+        100
+      ]
+    },
+    {
+      "id": "J4-storm-hold",
+      "title": "Storm front across the corridor — detour or an honest hold",
+      "what_it_proves": "The system never invents a way through. A severe storm front is laid across the whole Thuringen corridor as a line of overlapping zones. The planner must either verify a genuinely clear road around it — and show what that costs — or report that none exists and hold the vehicle.",
+      "expect": "Either a wide, clearly costed detour, or NO_CLEAR_DETOUR with the journey held. Both are correct; what must never happen is a route drawn straight through the front.",
+      "shipment": {
+        "origin": "R08",
+        "destination": "R03",
+        "weight_kg": 16000,
+        "value_eur": 260000,
+        "container": "C-DEMO-J4",
+        "customer_segment": "Top",
+        "optimization": "fastest",
+        "depart_in_minutes": 20,
+        "deliver_in_hours": 30
+      },
+      "weather_zones": [
+        {
+          "kind": "tornado",
+          "lat": 49.75,
+          "lon": 12.98,
+          "radius_km": 75,
+          "inject_at_progress": 8,
+          "from_minutes": -120,
+          "to_minutes": 1080,
+          "note": "Severe storm front across central Germany"
+        },
+        {
+          "kind": "tornado",
+          "lat": 50.53,
+          "lon": 11.99,
+          "radius_km": 75,
+          "inject_at_progress": 8,
+          "from_minutes": -120,
+          "to_minutes": 1080,
+          "note": "Storm front cell"
+        },
+        {
+          "kind": "tornado",
+          "lat": 51.3,
+          "lon": 11.0,
+          "radius_km": 75,
+          "inject_at_progress": 8,
+          "from_minutes": -120,
+          "to_minutes": 1080,
+          "note": "Storm front cell"
+        },
+        {
+          "kind": "tornado",
+          "lat": 52.07,
+          "lon": 10.01,
+          "radius_km": 75,
+          "inject_at_progress": 8,
+          "from_minutes": -120,
+          "to_minutes": 1080,
+          "note": "Storm front cell"
+        },
+        {
+          "kind": "tornado",
+          "lat": 52.85,
+          "lon": 9.02,
+          "radius_km": 75,
+          "inject_at_progress": 8,
+          "from_minutes": -120,
+          "to_minutes": 1080,
+          "note": "Storm front cell"
+        }
+      ],
+      "script": [
+        0,
+        8,
+        15,
+        25,
+        35,
+        50,
+        65,
+        80,
+        92,
+        100
+      ]
+    },
+    {
+      "id": "J5-rain-tradeoff",
+      "title": "Rain on the A7 — time against cost and fuel",
+      "what_it_proves": "Complete-outcome optimisation rather than fastest-road optimisation. A moderate rain zone on a long north-south run produces a detour option that must be weighed on time, distance, fuel and cost before it is approved.",
+      "expect": "A replan with at least one alternative, and a visible trade-off between the impacted route and the clear one.",
+      "shipment": {
+        "origin": "R01",
+        "destination": "R11",
+        "weight_kg": 20000,
+        "value_eur": 95000,
+        "container": "C-DEMO-J5",
+        "customer_segment": "Standard",
+        "optimization": "balanced",
+        "depart_in_minutes": 20,
+        "deliver_in_hours": 38
+      },
+      "weather_zones": [
+        {
+          "kind": "rain",
+          "radius_km": 25,
+          "place_at_route_fraction": 0.55,
+          "reference_point": {
+            "lat": 51.0,
+            "lon": 9.7,
+            "where": "A7 corridor near Kassel"
+          },
+          "inject_at_progress": 20,
+          "from_minutes": -60,
+          "to_minutes": 840,
+          "note": "Heavy rain band over the A7 around Kassel"
+        }
+      ],
+      "script": [
+        0,
+        10,
+        20,
+        32,
+        45,
+        58,
+        70,
+        82,
+        92,
+        100
+      ]
+    }
+  ]
+}

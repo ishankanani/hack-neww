@@ -99,31 +99,41 @@ class RoutingProvider(Provider):
     def __init__(self):
         super().__init__("routing", "OSRM (public)", True, "LIVE")
         self.legs = {}
+        self.route_choices = {}
         self.client = httpx.Client(timeout=3.0)
 
     def leg(self, from_ll, to_ll):
         return self.via(from_ll,to_ll,[])
 
     def via(self, from_ll, to_ll, via):
+        choices = self.alternatives(from_ll, to_ll, 0, via)
+        return choices[0] if choices else {"status": "ERROR", "geometry": None, "source": "estimated fallback"}
+
+    def alternatives(self, from_ll, to_ll, limit=2, via=None):
+        via = via or []
         key = tuple(tuple(p) for p in [from_ll,*via,to_ll])
-        cached = self.legs.get(key)
-        if cached and time.time()-cached[0] < (86400 if cached[1].get("geometry") else 30):
+        cache = self.legs if limit == 0 else self.route_choices
+        cache_key = key if limit == 0 else (key, limit)
+        cached = cache.get(cache_key)
+        if cached and time.time()-cached[0] < (86400 if cached[1] else 30):
             return cached[1]
         self.last_attempt = _now()
         try:
             stops=";".join(f"{lon},{lat}" for lat,lon in [from_ll,*via,to_ll])
             url = f"https://router.project-osrm.org/route/v1/driving/{stops}"
-            r = self.client.get(url, params={"overview": "full", "geometries": "geojson"}, timeout=3.0)
+            params = {"overview": "full", "geometries": "geojson", "alternatives": limit if limit else "false"}
+            r = self.client.get(url, params=params, timeout=4.0 if limit else 3.0)
             r.raise_for_status()
-            route = r.json()["routes"][0]
             self.last_success = _now(); self.data_timestamp = _now(); self.error = None
-            result = {"status": "LIVE", "duration_minutes": max(1, round(route["duration"] / 60)),
+            result = [{"status": "LIVE", "duration_minutes": max(1, round(route["duration"] / 60)),
                       "distance_km": round(route["distance"] / 1000, 1),
                       "geometry": route["geometry"]["coordinates"], "source": "OSRM road estimate (not truck-certified)"}
+                      for route in r.json().get("routes", [])[:limit+1]]
         except Exception as ex:
             self.error = type(ex).__name__
-            result = {"status": "ERROR", "geometry": None, "source": "estimated fallback"}
-        self.legs[key] = (time.time(), result)
+            result = []
+        cache[cache_key] = (time.time(), result)
+        if result: self.legs[key] = (time.time(), result[:1])
         return result
 
 

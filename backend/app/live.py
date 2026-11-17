@@ -139,10 +139,15 @@ class TomTom:
             self.retry_after["routing"]=time.time()+30
     def route(self,a,b,depart,truck):
         return self.route_via(a,b,[],depart,truck)
-    def route_via(self,a,b,via,depart,truck,avoid_areas=None):
+    def alternatives(self,a,b,depart,truck,limit=2):
+        road=self.route_via(a,b,[],depart,truck,max_alternatives=limit)
+        if not road:return []
+        return [{k:v for k,v in road.items() if k!="alternatives"},*road.get("alternatives",[])]
+    def route_via(self,a,b,via,depart,truck,avoid_areas=None,max_alternatives=0):
         if not self.key:return None
         if depart<now()-timedelta(minutes=5):return None
         params={"traffic":"true","travelMode":"truck","routeType":"fastest","computeTravelTimeFor":"all","sectionType":"traffic","departAt":depart.replace(second=0,microsecond=0).isoformat(),"vehicleHeight":truck["height_m"],"vehicleWidth":truck["width_m"],"vehicleLength":truck["length_m"],"vehicleWeight":truck["gross_weight_kg"],"vehicleMaxSpeed":80}
+        if max_alternatives:params.update(maxAlternatives=max_alternatives,alternativeType="anyRoute")
         stops=":".join(f"{lat},{lon}" for lat,lon in [a,*via,b])
         url=f"https://api.tomtom.com/routing/1/calculateRoute/{stops}/json"
         if avoid_areas:
@@ -178,7 +183,10 @@ class TomTom:
         else:
             doc=self.get(url,params)
         if not doc or not doc.get("routes"):return None
-        route=doc["routes"][0];summary=route["summary"]
+        choices=[self._road(route) for route in doc["routes"]]
+        return {**choices[0],**({"alternatives":choices[1:]} if max_alternatives else {})}
+    def _road(self,route):
+        summary=route["summary"]
         points=[[p["longitude"],p["latitude"]] for leg in route["legs"] for p in leg["points"]]
         total=math.ceil(summary["travelTimeInSeconds"]/60);delay=min(total,math.ceil(summary.get("trafficDelayInSeconds",0)/60))
         sections=[]

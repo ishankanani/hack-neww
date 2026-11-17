@@ -10,6 +10,7 @@ import json
 import os
 import re
 import uuid
+import hashlib
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from .review import change_summary
@@ -19,6 +20,7 @@ from .cost import journey_cost, cost_per_kg
 from .eta import compute_journey
 from .risk import assess
 from .operations import parse
+from .live import DEFAULT_TRUCK
 
 STORE_DIR = os.environ.get("STORE_DIR", os.path.join(os.getcwd(), "store"))
 STORE = os.path.join(STORE_DIR, "shipments.json")
@@ -107,9 +109,9 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
         if all(n in net["nodes"] for n in path) and path not in [p for p,_ in paths]:
             paths.append((path,None))
     if only_paths is not None: paths=[(path,None) for path in only_paths]
-    def build_option(path,hub,avoid=False):
+    def build_option(path,hub,avoid=False,road_override=None,road_id=None):
         actual_departure=parse(wait_until) if wait_until else depart_utc
-        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid,skip_origin_handling=ctx.get("skip_origin_handling",False))
+        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid,skip_origin_handling=ctx.get("skip_origin_handling",False),road_overrides={(origin,destination):road_override} if road_override else None)
         if wait_until:
             minutes=max(0,round((actual_departure-depart_utc).total_seconds()/60))
             jr["depart_at"]=depart_utc.isoformat();jr["total_minutes"]+=minutes
@@ -142,7 +144,7 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
             risk["reasons"].append("Active operational events included in ETA")
             risk["score"]+=20
         risk["level"]="HIGH" if risk["score"]>=55 else "MEDIUM" if risk["score"]>=25 else "LOW"
-        return {**jr,"route_id":"-".join(path)+(":clear" if avoid else ":normal"),"label":(f"Via {hub['name']} · clear detour" if hub else "Weather-safe road detour") if avoid else f"Via {hub['name']}" if hub else "Direct road estimate","kind":"dataset_lane" if known else "estimate",
+        return {**jr,"route_id":"-".join(path)+(f":road-{road_id}" if road_id else "")+(":clear" if avoid else ":normal"),"label":(f"Via {hub['name']} · clear detour" if hub else "Weather-safe road detour") if avoid else f"Via {hub['name']}" if hub else "Alternative road" if road_id else "Direct road estimate","kind":"dataset_lane" if known else "estimate",
                         "intermediate_hub":hub,"recommendation_note":"User-entered timetable applied; capacity is unverified." if jr.get("scheduled_services") else "Next eligible movement estimate — departure availability unverified.",
                         "is_demo":ctx.get("is_demo",False), "vehicle_constraints":"Truck profile requested" if "TomTom" in jr["data_sources"]["transport"] else "Vehicle restrictions unverified by fallback routing",
                         "cost":{"transport_eur":c["transport_eur"],"fuel_l":c["fuel_l"],"fuel_eur":c["fuel_eur"],"distance_km":round(c["km"],1),"cost_per_kg":cost_per_kg(c["transport_eur"],weight_kg),"detour_surcharge_eur":surcharge},
@@ -158,6 +160,31 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     # overlapping provider waits. Every candidate still checks all weather zones.
     with ThreadPoolExecutor(max_workers=min(4,len(paths))) as pool:
         options=[option for group in pool.map(evaluate_path,paths) for option in group]
+    # Ask for real road alternatives, rather than treating a transfer stop as a
+    # different road. Each is costed and checked by the same journey engine.
+    if only_paths is None and not wait_until:
+        direct=next(o for o in options if o["path"]==[origin,destination] and not o["weather_detours"])
+        departure=parse(direct["road_legs"][0]["departure"])
+        providers=ctx["providers"];tomtom=getattr(providers,"tomtom",None)
+        choices=tomtom.alternatives(ll(net["nodes"][origin]),ll(net["nodes"][destination]),departure,truck or DEFAULT_TRUCK) if tomtom and hasattr(tomtom,"alternatives") else []
+        if not choices and hasattr(providers.routing,"alternatives"):
+            choices=providers.routing.alternatives(ll(net["nodes"][origin]),ll(net["nodes"][destination]))
+        def signature(geometry):
+            cells=[]
+            for point in geometry or []:
+                cell=(round(point[0],2),round(point[1],2))
+                if not cells or cells[-1]!=cell:cells.append(cell)
+            return hashlib.sha1(json.dumps(cells).encode()).hexdigest()[:12]
+        seen={signature(o.get("geometry")) for o in options}
+        extra=[]
+        for road_choice in choices:
+            key=signature(road_choice.get("geometry"))
+            if not road_choice.get("geometry") or key in seen:continue
+            seen.add(key);extra.append((road_choice,key))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            additions=list(pool.map(lambda pair:build_option([origin,destination],None,road_override=pair[0],road_id=pair[1]),extra[:2]))
+        for i,option in enumerate(additions,1):option["label"]=f"Alternative road {i}"
+        options.extend(additions)
     from .optimization import decorate
     from .capacity import evaluate as evaluate_capacity
     for option in options:option["capacity"]=evaluate_capacity(option,ctx,ldm)

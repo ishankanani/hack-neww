@@ -7,6 +7,7 @@ status); manager hub delays; audit. See README for the section-by-section map.
 from __future__ import annotations
 
 import os
+from copy import copy, deepcopy
 from .runtime import configure_runtime, deployment_info
 configure_runtime()
 from contextlib import asynccontextmanager
@@ -108,6 +109,8 @@ class TruckReq(BaseModel):
     gross_weight_kg: float = Field(default=40000, ge=1000, le=50000)
 
 class RouteReq(BaseModel):
+    sample_id: Optional[str] = None
+    sample_weather: bool = False
     optimization: Literal["fastest","cost","balanced"] = "fastest"
     truck: TruckReq = Field(default_factory=TruckReq)
     origin: str
@@ -228,7 +231,6 @@ def weather(node: str):
 
 # ---- planning ----
 @app.post("/api/route")
-@serialized
 def route(req: RouteReq):
     net = S["network"]
     if req.origin not in net["nodes"] or req.destination not in net["nodes"]:
@@ -237,16 +239,42 @@ def route(req: RouteReq):
         raise HTTPException(422, "origin equals destination")
     if req.weight_kg > req.truck.gross_weight_kg: raise ValueError("Gross vehicle weight must include the cargo")
     depart = _parse(req.depart_at) if req.depart_at else datetime.now(timezone.utc)
-    options = plan_options(_ctx(), req.origin, req.destination, depart,
-                           req.weight_kg, req.required_delivery.isoformat() if req.required_delivery else None, req.value_eur, req.optimization, req.truck.model_dump())
+    # Routing waits on remote providers. Keep fleet/scenario polling responsive
+    # and give every candidate the same operational revision throughout a search.
+    with LOCK:
+        context=_ctx()
+        context["operations"]=copy(context["operations"])
+        context["operations"].data=deepcopy(context["operations"].data)
+        context["hub_delays"]=deepcopy(context["hub_delays"])
+        context["capacity_shipments"]=deepcopy(context["capacity_shipments"])
+    revision=context["operations"].data["revision"]
+    sample=None; zones=[]
+    if req.sample_id:
+        from .journey_examples import example, isolated_context
+        sample=example(req.sample_id);context=isolated_context(context)
+    args=(req.origin,req.destination,depart,req.weight_kg,req.required_delivery.isoformat() if req.required_delivery else None,req.value_eur,req.optimization,req.truck.model_dump())
+    options=plan_options(context,*args)
+    if sample and req.sample_weather:
+        from .journey_examples import weather_for
+        baseline=next((o for o in options if len(o["path"])==2),options[0])
+        zones=weather_for(sample,baseline.get("geometry"),depart)
+        context["operations"].data["weather_zones"]=zones
+        options=plan_options(context,*args)
 
     savings = savings_vs_baseline(options[0], options[1]) if len(options) > 1 and options[0].get("avoidance_status") in {"NO_ZONE", "CLEAR"} else None
     wx = []  # Manual/sample records are evaluated by the same weather alert engine.
     safe_available=approvable(options[0])
     if not safe_available:savings=None
-    _audit("route_calculated", f"{req.origin} → {req.destination}: " + (f"recommended ETA {options[0]['eta']}" if safe_available else "no route clear of simulated weather zones"))
+    if not sample:_audit("route_calculated", f"{req.origin} → {req.destination}: " + (f"recommended ETA {options[0]['eta']}" if safe_available else "no route clear of simulated weather zones"))
     return {"options": options, "recommended": 0 if safe_available else None, "savings": savings,
-            "weather": wx, "revision": S["operations"].data["revision"], "providers": S["providers"].all(), "evaluated_at": _now_iso()}
+            "weather": wx, "revision": revision, "providers": S["providers"].all(), "evaluated_at": _now_iso(),
+            "sample": {"id":sample["id"],"title":sample["title"],"weather_applied":req.sample_weather} if sample else None,"weather_zones":zones}
+
+
+@app.get("/api/journey-examples")
+def journey_examples():
+    from .journey_examples import catalog
+    return catalog(S["network"]["nodes"])
 
 
 # ---- shipments ----

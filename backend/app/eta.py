@@ -14,7 +14,7 @@ def _haversine_km(a,b):
     x=math.sin(dlat/2)**2+math.cos(math.radians(a[0]))*math.cos(math.radians(b[0]))*math.sin(dlon/2)**2
     return 12742*math.asin(min(1,math.sqrt(x)))
 
-def compute_journey(network, holidays, transfer, hub_delays, providers, origin, dest, depart_utc, path=None, operations=None, truck=None, avoid_zones=False, skip_origin_handling=False):
+def compute_journey(network, holidays, transfer, hub_delays, providers, origin, dest, depart_utc, path=None, operations=None, truck=None, avoid_zones=False, skip_origin_handling=False, road_overrides=None):
     path = path or [origin,dest]
     applied_global_traffic=set()
     rows=[]; cur=depart_utc; geometry=[]; all_geometry=True; leg_data=[]; alerts=[]; forecasts=[]; traffic_sections=[]; services=[]; zone_impacts=[]; weather_detours=[]; detour_km=0
@@ -50,7 +50,8 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
         # Forecast at the expected service departure; readiness includes the cutoff buffer.
         expected,service=next_departure(cur,a,b,schedules,holidays,events)
         routing_start=expected
-        road=providers.tomtom.route((na["lat"],na["lon"]),(nb["lat"],nb["lon"]),routing_start,truck or DEFAULT_TRUCK) if hasattr(providers,"tomtom") else None
+        road=(road_overrides or {}).get((a,b))
+        if road is None:road=providers.tomtom.route((na["lat"],na["lon"]),(nb["lat"],nb["lon"]),routing_start,truck or DEFAULT_TRUCK) if hasattr(providers,"tomtom") else None
         road=dict(road or providers.routing.leg((na["lat"],na["lon"]),(nb["lat"],nb["lon"])))
         original_road=road
         estimated_minutes=max(1,road.get("duration_minutes",60),math.ceil(road.get("distance_km",0)/65*60))
@@ -80,8 +81,10 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
             if sim_sec:
                 road["traffic_sections"] = sim_sec
                 road["traffic_minutes"] = sim_del
+                road["duration_minutes"] += sim_del
         # OSRM is a car-profile estimate; conservative 65 km/h prototype floor.
-        drive=road["duration_minutes"]-road.get("traffic_minutes",0) if "traffic_minutes" in road else max(road.get("duration_minutes",0),math.ceil(km/65*60))
+        drive=max(1,road.get("duration_minutes",0)-road.get("traffic_minutes",0))
+        if "TomTom" not in road.get("source",""):drive=max(drive,math.ceil(km/65*60))
         geometry_start=len(geometry); section_start=len(traffic_sections)
         traffic_sections.extend(road.get("traffic_sections",[]))
         src=road.get("source","estimated fallback")
@@ -131,7 +134,7 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
                 comp["schedule_wait"]+=round((departure-cur).total_seconds()/60)
             cur=departure
         # If weather preparation missed the service, use the new departure's traffic estimate.
-        if cur!=routing_start and not hit and not avoid_zones and hasattr(providers,"tomtom") and providers.tomtom.key:
+        if cur!=routing_start and not hit and not avoid_zones and not road_overrides and hasattr(providers,"tomtom") and providers.tomtom.key:
             fresh=providers.tomtom.route((na["lat"],na["lon"]),(nb["lat"],nb["lon"]),cur,truck or DEFAULT_TRUCK)
             if fresh:
                 road=fresh; drive=fresh["duration_minutes"]-fresh.get("traffic_minutes",0)
