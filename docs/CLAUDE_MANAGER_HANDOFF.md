@@ -70,6 +70,64 @@ to production. Finish the acceptance work below before calling it complete.
   A datetime-local fill through the browser tool did not retain the requested
   date. Check whether this is an input issue or automation behavior.
 
+## Acceptance session, 17 Nov 2026 (Claude, cloud sandbox)
+
+Run against a local Postgres 16 (not Neon: the production `DATABASE_URL` was not
+available or needed), two backend instances sharing that database, and the Vite
+frontend in Chromium. OSRM and map tiles are blocked in that sandbox, so routing
+used a local stub serving `data/demo_roads.json` geometry, and the map ran in its
+offline fallback renderer. Four commits on top of `3c23a72`:
+
+- `833c928` **Postgres adapter.** psycopg skips the commit silently when the
+  connection is already closed, so a request could report a save that never
+  happened: `session()` now commits explicitly. A failure at commit time left a
+  phantom version in the cache, so the worker could keep serving its own
+  uncommitted data after another instance wrote: the cache now clears on any
+  storage error. Map tiles and `/api/health` no longer reload shared state (one
+  database connection and global lock per tile; an outage blanked the map).
+- `2f771c2` **Control room after a save.** Saving on the planner and opening the
+  control room hung on "Loading journey..." with everything disabled (StrictMode
+  remount cancelled the auto-open review and `busy` never cleared). Fixed, and
+  saved journeys are pinned so a stale or pre-save queue response cannot hide them.
+- `49b3fd0` **Manager routing.** New manager journeys showed no requested-connection
+  explanation at all. The panel now covers new and saved journeys, separates
+  available / late / needs an alternative, shows all five metrics, and the deadline
+  reason uses Berlin local time (it printed UTC beside a local arrival time).
+- `aacb52f` **Map.** One basemap-unavailable warning instead of three.
+
+Evidence:
+
+- Two instances, one database: 8 concurrent creates split across both, nothing lost
+  (11 + 1 + 8 = 20 on each). Demo events stay in `demo/<session>/operations.json`.
+  Database stopped: journey requests return 503 with the "no successful save" message;
+  health returns 200; recovery is automatic.
+- A Via Wuerzburg route saved on the planner was listed in 0.06 s and opened in 0.56 s
+  with that road selected and no `/replan` call. It survived forced pre-save queue
+  responses, a reload, a fresh browser session, genuine restarts of both instances
+  (new PIDs), and was identical on the second instance (`R16-R29-R21`, 223 points).
+- Hub editor: add Nuernberg, add Chemnitz, move Chemnitz earlier, remove Chemnitz, all
+  through the real buttons. The proposal left the saved itinerary unchanged; approval
+  made `R16-R29-R10-R21` the plan and cleared the pending request.
+- New journey from Wuerzburg via Hamburg saved and opened. Late requested route is
+  explained as late; with a snow zone over Hamburg it needs an alternative, the clear
+  direct road is pre-selected, and Approve stays disabled if the blocked one is chosen.
+- A departed vehicle without a fresh position: route proposal returns 422 and the saved
+  itinerary is unchanged.
+- Departure input: `fill("2026-11-19T08:30")` is retained and sent as `07:30Z`. The
+  earlier failure was the automation typing into a `datetime-local` control.
+- Fallback map draws only the selected road and switches with the side menu. Weather
+  simulation places a zone, re-checks the route and selects a verified clear detour.
+- 390 px and 1440 px: no horizontal page scroll, no duplicated warnings, no driver
+  link or Vehicle progress panel. `npm run build` passes. Manager tests: 8 passed.
+
+Not verified here, needs a machine with internet:
+
+- Google Maps (needs the API key) and the MapLibre road map with real tiles: whether
+  only the selected road is drawn and the camera holds on switching. Code shows
+  alternatives are off by default (`showAlternatives=false`).
+- Real OSRM geometry, and the deployed site against Neon.
+- The offline fallback renderer does not draw weather-zone circles (MapLibre does).
+
 ## Remaining work, in priority order
 
 ### P0: Finish the save and persistence workflow
