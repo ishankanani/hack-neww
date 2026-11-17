@@ -1,0 +1,10 @@
+/* Readability: clearer weights for headings and labels (loaded last). */
+h1{font-weight:800}
+h2,h3,.card__h h2{font-weight:800}
+th,.htbl th{font-weight:700}
+label,.fld label,dt{font-weight:700}
+.workspace-nav button{font-weight:600}
+.workspace-nav button.active,.workspace-nav button[aria-current="page"]{font-weight:800}
+.savings-explainer{padding:16px 20px;margin-bottom:16px}
+.savings-explainer summary{cursor:pointer;font-size:16px}
+.savings-explainer ol{margin:10px 0 6px;padding-left:22px;display:grid;gap:6px;line-height:1.55}

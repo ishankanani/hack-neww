@@ -65,7 +65,7 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
  const name=(id:string)=>nodes.find(n=>n.id===id)?.name??"Vehicle position";
  const visibleShips=ships.filter(s=>filter==="all"||groupOf(s)===filter);
  return <>
-  <div className="page-heading control-heading"><div><span className="eyebrow">CONTROL ROOM</span><h1>Human in the loop</h1><p>Plan hub connections, review changes and approve dispatch.</p></div><button className="btn" disabled={busy} onClick={()=>{setCreating(true);setDetail(null);setRevising(null);setErr("");setMsg("")}}><Plus size={16}/>New manager journey</button></div>
+  <div className="page-heading control-heading"><div><h1>Control room</h1></div><button className="btn" disabled={busy} onClick={()=>{setCreating(true);setDetail(null);setRevising(null);setErr("");setMsg("")}}><Plus size={16}/>New manager journey</button></div>
   {err&&<div role="alert" className="notice notice--warn">{err}</div>}{msg&&<div role="status" className="notice notice--info">{msg}</div>}
   <div className="control-overview">{(["planned","review","active"] as const).map(group=><button key={group} aria-pressed={filter===group} onClick={()=>setFilter(filter===group?"all":group)}><span className={`overview-icon ${group}`}>{group==="planned"?<ClipboardList size={19}/>:group==="review"?<TriangleAlert size={19}/>:<ShieldCheck size={19}/>}</span><span>{group==="planned"?"Planned journeys":group==="review"?"Review required":"Active journeys"}<b>{ships.filter(s=>groupOf(s)===group).length}</b></span></button>)}</div>
   <div className="control-layout">

@@ -66,12 +66,26 @@ export function Savings() {
 
   return <>
     <div className="page-heading">
-      <div><span className="eyebrow">SAVINGS & DECISION EVIDENCE</span><h1>Know what is estimated.<br/>See what actually happened.</h1><p>Trace each comparison to a saved plan, a manager approval or a reported delivery.</p></div>
+      <div><h1>Savings</h1></div>
       <div className="evidence-actions">
         <button className="btn btn--ghost" disabled={loading || busy} onClick={() => setRefresh(v => v+1)} aria-label="Refresh decision evidence"><RefreshCw size={15}/></button>
         <button className="btn" disabled={loading || busy || !!error || (mode === "actual" ? !outcomes.length : !rows.length)} onClick={exportReport}><Download size={15}/> Export evidence</button>
       </div>
     </div>
+    <details className="card savings-explainer" open>
+      <summary><b>How these numbers are calculated</b></summary>
+      <ol>
+        <li><b>What is compared.</b> Each manager-approved shipment is compared with the <b>direct road option</b> calculated in the same planning run, so both use the same departure time, conditions and load.</li>
+        <li><b>Transport saving</b> = direct option's transport estimate − approved route's transport estimate. Transport estimates come from the DACHSER lane tariffs in <i>relationen.csv</i>, shared by the shipment's loading metres (at least 15% of a trailer); where no tariff exists the tool uses €2.60 per km.</li>
+        <li><b>Time saved</b> = direct option's total journey time − approved route's total journey time (driving, hub handling, waits and holds). A negative value means the approved route takes longer.</li>
+        <li><b>Fuel saved</b> = the difference in estimated fuel at 30 L per 100 km. It is shown on its own and is not added to the planning value, so nothing is counted twice.</li>
+        <li><b>Planning value</b> = transport saving + time saved × €{s?.assumptions.value_of_time_eur_per_hour ?? 50} per hour. The hourly rate is a planning valuation of transit time, not a cost anyone pays.</li>
+        <li><b>Reroutes.</b> When a manager approves a different route because conditions changed, that decision is compared with the previously approved route recalculated under the new conditions, and listed separately.</li>
+        <li><b>Left out.</b> Plans that are not approved, are on hold, have no comparable direct option, or are demo scenarios (they appear only under the demo tab).</li>
+        <li><b>Actual results</b> appear only from recorded deliveries matched to an approved plan; totals need at least 5 such records.</li>
+      </ol>
+      <p className="fineprint">All figures are estimates from the tool's own calculations. They are not invoiced or realised savings.</p>
+    </details>
     <div className="evidence-tabs" role="tablist" aria-label="Evidence source">
       {modes.map(m => <button key={m.id} id={`tab-${m.id}`} role="tab" aria-selected={mode===m.id} aria-controls="evidence-panel" disabled={busy} onClick={() => { setMode(m.id); setRepaired(null); }}>{m.label}</button>)}
     </div>

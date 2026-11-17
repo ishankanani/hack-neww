@@ -109,7 +109,7 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
  useEffect(()=>{const timer=setInterval(()=>refreshLatest.current(),120000);return()=>clearInterval(timer)},[]);
  return <>
  <section className="card planning-card" ref={plannerPanel}>
-  <div className="card__h"><div><span className="eyebrow">START A JOURNEY</span><h2>Plan a journey</h2></div><button className="linkbtn" onClick={weekendDemo}>Saturday example ↗</button></div>
+  <div className="card__h"><div><h2>Plan a journey</h2></div><button className="linkbtn" onClick={weekendDemo}>Saturday example ↗</button></div>
   <JourneyExamples disabled={loading||refreshing||saving} onLoad={loadExample}/>
   {sample&&<div className="example-preview"><div><b>Sample simulation · {sample.title}</b><span>{sampleWeather?"Sample weather applied to this preview.":"Baseline plan. Preview the sample weather after calculating."}</span></div>{sample.weather_zone_count>0&&<label><input type="checkbox" checked={sampleWeather} disabled={loading||refreshing} onChange={e=>setSampleWeather(e.target.checked)}/>Preview weather impact</label>}<button className="linkbtn" disabled={loading||refreshing} onClick={()=>{setSample(null);setSampleWeather(false);setResp(null)}}>Exit sample</button></div>}
   <form onSubmit={e=>{e.preventDefault();void go()}}>

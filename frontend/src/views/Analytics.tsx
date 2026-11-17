@@ -44,10 +44,10 @@ export function Analytics({ onData }: { onData: () => void }) {
             <tbody>{hubs.map((h) => {
               const t = "avg_transfer_minutes" in h.transfer ? h.transfer : null;
               const hi = "reliability_pct" in h.history ? h.history : null;
-              return (<tr key={h.id}><td><b>{h.name}</b> {weatherAlerts.includes(h.id) && <span className="chip chip--delay">Weather alert</span>} <span style={{ color: "var(--faint)", fontSize: 11 }}>{h.id}</span></td>
+              return (<tr key={h.id}><td><b>{h.name}</b> {weatherAlerts.includes(h.id) && <span className="chip chip--delay">Weather alert</span>} <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{h.id}</span></td>
                 <td style={{ color: "var(--muted)" }}>{h.type}</td><td className="num">{t ? hm(t.avg_transfer_minutes) : "2h"}</td>
                 <td className="num">{hi ? hi.reliability_pct + "%" : "—"}</td>
-                <td>{h.operational_delay ? <span className="chip chip--delay"><Factory size={11} /> +{h.operational_delay.minutes}m · {h.operational_delay.reason}</span> : <span style={{ color: "var(--faint)", fontSize: 12 }}>none</span>}</td>
+                <td>{h.operational_delay ? <span className="chip chip--delay"><Factory size={11} /> +{h.operational_delay.minutes}m · {h.operational_delay.reason}</span> : <span style={{ color: "var(--faint)", fontSize: 13.5 }}>none</span>}</td>
                 <td style={{ textAlign: "right" }}>{h.operational_delay
                   ? <button className="delaybtn" onClick={() => api.clearDelay(h.id).then(() => { load(); onData(); })}><X size={12} /> resolve</button>
                   : <button className="delaybtn" onClick={() => setDelayFor(h)}><Plus size={12} /> add delay</button>}</td></tr>);
@@ -59,7 +59,7 @@ export function Analytics({ onData }: { onData: () => void }) {
       <div className="card" style={{ marginTop: 16 }}>
         <div className="card__h"><div><h2><CloudLightning size={15} className="h-ic" /> Historical disruption log</h2><div className="sub">stoerungen.csv</div></div></div>
         <div className="he">{dis.map((x, i) => (
-          <div className="row" key={i}><span><b>{x.type}</b> · {x.from}{x.to !== x.from ? "→" + x.to : ""}<div style={{ fontSize: 11, color: "var(--muted)" }}>{x.description}</div></span>
+          <div className="row" key={i}><span><b>{x.type}</b> · {x.from}{x.to !== x.from ? "→" + x.to : ""}<div style={{ fontSize: 12.5, color: "var(--muted)" }}>{x.description}</div></span>
             <span style={{ color: "var(--bad)", fontWeight: 700, whiteSpace: "nowrap" }}>{Math.round(x.volume_effect * 100)}% vol</span></div>
         ))}</div>
       </div>

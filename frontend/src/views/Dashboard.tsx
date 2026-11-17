@@ -35,8 +35,8 @@ export function Dashboard() {
             {hv.length === 0 && <div className="empty">No high-value shipments.</div>}
             {hv.map((h) => (
               <div className="row" key={h.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
-                <div><b>{h.id}</b> · {h.origin}→{h.destination} · {eur(h.value_eur)}<div style={{ fontSize: 11, color: "var(--muted)" }}>req {dt(h.required_delivery)} · ETA {dt(h.current_eta)}</div></div>
-                <div style={{ textAlign: "right" }}><span className={riskCls(h.risk_level)}>{h.risk_level}</span><div style={{ fontSize: 11, color: "var(--bad)", fontWeight: 700 }}>{h.exposure_eur ? "exposure " + eur(h.exposure_eur) : ""}</div></div>
+                <div><b>{h.id}</b> · {h.origin}→{h.destination} · {eur(h.value_eur)}<div style={{ fontSize: 12.5, color: "var(--muted)" }}>req {dt(h.required_delivery)} · ETA {dt(h.current_eta)}</div></div>
+                <div style={{ textAlign: "right" }}><span className={riskCls(h.risk_level)}>{h.risk_level}</span><div style={{ fontSize: 12.5, color: "var(--bad)", fontWeight: 700 }}>{h.exposure_eur ? "exposure " + eur(h.exposure_eur) : ""}</div></div>
               </div>
             ))}
           </div>
@@ -45,14 +45,14 @@ export function Dashboard() {
         <div className="card">
           <div className="card__h"><div><h2><CalendarDays size={15} className="h-ic" /> Upcoming holidays</h2><div className="sub">kalender.csv · driving-ban impact</div></div></div>
           <div className="he">
-            {hol.map((h) => <div className="row" key={h.date}><span><b>{h.date}</b> · {h.name}</span><span style={{ color: "var(--warn)", fontWeight: 700, fontSize: 11 }}>ban risk</span></div>)}
+            {hol.map((h) => <div className="row" key={h.date}><span><b>{h.date}</b> · {h.name}</span><span style={{ color: "var(--warn)", fontWeight: 700, fontSize: 12.5 }}>ban risk</span></div>)}
           </div>
         </div>
 
         <div className="card">
           <div className="card__h"><div><h2><CloudLightning size={15} className="h-ic" /> Historical disruptions</h2><div className="sub">stoerungen.csv</div></div></div>
           <div className="he">
-            {dis.slice(0, 6).map((x, i) => <div className="row" key={i}><span><b>{x.type}</b> · {x.from}<div style={{ fontSize: 11, color: "var(--muted)" }}>{x.description.slice(0, 60)}</div></span><span style={{ color: "var(--bad)", fontWeight: 700 }}>{Math.round(x.volume_effect * 100)}%</span></div>)}
+            {dis.slice(0, 6).map((x, i) => <div className="row" key={i}><span><b>{x.type}</b> · {x.from}<div style={{ fontSize: 12.5, color: "var(--muted)" }}>{x.description.slice(0, 60)}</div></span><span style={{ color: "var(--bad)", fontWeight: 700 }}>{Math.round(x.volume_effect * 100)}%</span></div>)}
           </div>
         </div>
       </div>
@@ -60,7 +60,7 @@ export function Dashboard() {
       <div className="card" style={{ marginTop: 16 }}>
         <div className="card__h"><div><h2><History size={15} className="h-ic" /> Audit trail</h2></div></div>
         <div className="audit">
-          {audit.map((a, i) => <div className="arow" key={i}><span className="tm">{dt(a.at)}</span><div><span className="ty">{a.type}</span> <span style={{ fontSize: 10, color: "var(--faint)" }}>{a.source}</span><div>{a.detail}</div></div></div>)}
+          {audit.map((a, i) => <div className="arow" key={i}><span className="tm">{dt(a.at)}</span><div><span className="ty">{a.type}</span> <span style={{ fontSize: 12, color: "var(--faint)" }}>{a.source}</span><div>{a.detail}</div></div></div>)}
         </div>
       </div>
     </>
