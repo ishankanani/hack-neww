@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useVisibleRows } from "./useVisibleRows";
 import { Save, RefreshCw, ArrowUpRight, CircleCheck, CircleDashed } from "lucide-react";
 import { api } from "../api/client";
 import type { NetNode, Shipment } from "../api/types";
@@ -25,13 +26,14 @@ export function SavedJourneys({ nodes, refreshKey, onReview }: { nodes: NetNode[
 
   const name = (id: string) => nodes.find((n) => n.id === id)?.name ?? id;
   const mine = (ships ?? []).filter((s) => s.data_kind !== "demo");
+  const listRef = useRef<HTMLDivElement>(null);
+  const listStyle = useVisibleRows(listRef, 4, [mine.length, ships]);
 
   return (
     <details className="card saved-journeys" open>
       <summary className="card__h saved-journeys-summary">
         <div>
           <h2><Save size={15} className="h-ic" /> Saved journeys <span className="mini">{mine.length}</span></h2>
-          <div className="sub">Plans awaiting manager review</div>
         </div>
         <button className="icon-button" aria-label="Refresh saved journeys" onClick={(e) => { e.preventDefault(); void load(); }}>
           <RefreshCw size={14} className={busy ? "spin" : ""} />
@@ -44,8 +46,8 @@ export function SavedJourneys({ nodes, refreshKey, onReview }: { nodes: NetNode[
         <div className="empty">Nothing saved yet. Calculate a route and choose “Save plan for review”.</div>
       )}
 
-      <div className="saved-list">
-        {[...mine].sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)).slice(0, 8).map((s) => (
+      <div className="saved-list" ref={listRef} style={listStyle} tabIndex={mine.length > 4 ? 0 : undefined} aria-label={mine.length > 4 ? "Saved journeys, scroll for more" : undefined}>
+        {[...mine].sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)).map((s) => (
           <div className="saved-row" key={s.id}>
             <span className="saved-id">
               <b>{s.id}</b>

@@ -236,3 +236,13 @@ def test_schedule_timeline_and_signed_savings(client):
     for option in ship["options"]:
         assert option["comparison"]["money_saved_eur"]==direct["cost"]["transport_eur"]-option["cost"]["transport_eur"]
     assert any(o["comparison"]["money_saved_eur"]<0 for o in ship["options"])
+
+
+def test_decision_records_who_decided(client):
+    s=client.post("/api/demo/start").json()
+    o=s["options"][0]
+    r=client.post("/api/decisions",json={"shipment_id":s["id"],"action":"accept","option":0,"revision":o["revision"],"quote_id":o["quote_id"],
+                                         "reason":"Keeps the delivery on time","acknowledge_deadline":not o["risk"]["deadline_ok"],"decided_by":"  Maria Keller "})
+    assert r.status_code==200,r.text
+    assert r.json()["decided_by"]=="Maria Keller"
+    assert any(d.get("decided_by")=="Maria Keller" for d in client.get("/api/operations").json()["decisions"])

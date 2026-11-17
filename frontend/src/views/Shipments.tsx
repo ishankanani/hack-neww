@@ -92,7 +92,7 @@ function Drawer({ nodes, ops, shipment, onClose, onChanged }: { nodes: NetNode[]
   const s = shipment;
   const [selected,setSelected] = useState(0);
   const [reason,setReason]=useState(""),[busy,setBusy]=useState(false);
-  const sched = async(force:boolean)=>{setBusy(true);try{const o=s.options?.[selected];if(!o)throw Error("Recalculate first");await api.decide({shipment_id:s.id,action:"accept",option:selected,revision:o.revision??-1,quote_id:o.quote_id,reason,acknowledge_deadline:force});setMsg("Scheduled ✓ · decision recorded");onChanged()}catch(e){setMsg(String(e));onChanged()}finally{setBusy(false)}};
+  const sched = async(force:boolean)=>{setBusy(true);try{const o=s.options?.[selected];if(!o)throw Error("Recalculate first");await api.decide({decided_by:(()=>{try{return localStorage.getItem("dachser-decided-by")??undefined}catch{return undefined}})(),shipment_id:s.id,action:"accept",option:selected,revision:o.revision??-1,quote_id:o.quote_id,reason,acknowledge_deadline:force});setMsg("Scheduled ✓ · decision recorded");onChanged()}catch(e){setMsg(String(e));onChanged()}finally{setBusy(false)}};
 
   return (
     <div className="drawer-bg" onClick={onClose}><div className="drawer" onClick={(e) => e.stopPropagation()}>

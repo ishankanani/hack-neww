@@ -522,6 +522,12 @@ class DecisionReq(BaseModel):
     acknowledge_deadline: bool = False
     supersedes_decision_id: Optional[str] = None
     supersedes_updated_at: Optional[str] = None
+    decided_by: Optional[str] = Field(default=None, max_length=80)  # name entered by the manager (no login yet)
+
+    @model_validator(mode="after")
+    def clean_name(self):
+        self.decided_by = (self.decided_by or "").strip() or None
+        return self
 
 def _node(nid):
     if nid not in S["network"]["nodes"]: raise ValueError("Unknown hub")

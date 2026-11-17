@@ -32,7 +32,7 @@ export const api = {
   addEvent: (body: Omit<ScenarioEvent,"id">) => req<ScenarioEvent>("/events", {method:"POST",body:JSON.stringify(body)}),
   resolveEvent: (id: string) => req(`/events/${id}`, {method:"DELETE"}),
   replan: (id: string) => req<Shipment>(`/shipments/${id}/replan?from_now=true`, {method:"POST"}),
-  decide: (body: {shipment_id:string; action:string; option:number; revision:number; quote_id:string; reason:string; acknowledge_deadline:boolean;supersedes_decision_id?:string;supersedes_updated_at?:string}) => req<Decision>("/decisions", {method:"POST", body:JSON.stringify(body)}),
+  decide: (body: {shipment_id:string; action:string; option:number; revision:number; quote_id:string; reason:string; acknowledge_deadline:boolean;supersedes_decision_id?:string;supersedes_updated_at?:string;decided_by?:string}) => req<Decision>("/decisions", {method:"POST", body:JSON.stringify(body)}),
   editDecision: (id:string,body:{reason:string;expected_updated_at:string})=>req<Decision>(`/decisions/${id}`,{method:"PATCH",body:JSON.stringify(body)}),
   network: () => req<NetworkDoc>("/network"),
   hubs: () => req<{ hubs: Hub[] }>("/hubs"),

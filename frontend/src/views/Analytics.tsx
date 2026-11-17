@@ -17,14 +17,22 @@ export function Analytics({ onData }: { onData: () => void }) {
     api.disruptions().then((r) => setDis(r.historical)).catch(() => {});
   }
   useEffect(load, []);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const LIMIT = 5;
+  const shown = <T,>(key: string, rows: T[]) => (open[key] ? rows : rows.slice(0, LIMIT));
+  const more = (key: string, total: number) => total > LIMIT && (
+    <button type="button" className="show-more" aria-expanded={!!open[key]} onClick={() => setOpen(o => ({ ...o, [key]: !o[key] }))}>
+      {open[key] ? "Show fewer" : `Show all ${total}`}
+    </button>
+  );
   return (
     <>
-      <div className="card">
-        <div className="card__h"><div><h2><BarChart3 size={15} className="h-ic" /> Lane performance (historical)</h2><div className="sub">disposition.csv — 19,980 daily records · ranked by spillover</div></div></div>
+      <details className="card ni-section" open>
+        <summary className="card__h"><div><h2><BarChart3 size={15} className="h-ic" /> Lane performance (historical)</h2><div className="sub">disposition.csv — 19,980 daily records · ranked by spillover</div></div></summary>
         <div style={{ overflowX: "auto" }}>
           <table className="htbl">
             <thead><tr><th>Lane</th><th>Destination</th><th>km</th><th>Util</th><th>Spillover</th><th>Reliability</th><th>Line €</th><th>Special €</th><th>Avg €/day</th><th>Days</th></tr></thead>
-            <tbody>{rel.map((r) => (
+            <tbody>{shown("lanes", rel).map((r) => (
               <tr key={r.relation}><td><b>{r.relation}</b></td><td>{r.destination}</td><td className="num">{r.km}</td>
                 <td className="num">{r.avg_utilisation}%</td>
                 <td className="num" style={{ color: r.spillover_rate > 0.18 ? "var(--bad)" : "inherit", fontWeight: r.spillover_rate > 0.18 ? 700 : 400 }}>{(r.spillover_rate * 100).toFixed(0)}%</td>
@@ -34,14 +42,15 @@ export function Analytics({ onData }: { onData: () => void }) {
             ))}</tbody>
           </table>
         </div>
-      </div>
+        {more("lanes", rel.length)}
+      </details>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card__h"><div><h2><Building2 size={15} className="h-ic" /> Hubs &amp; operational delays</h2><div className="sub">transfer = historical proxy · managers set temporary delays</div></div></div>
+      <details className="card ni-section" style={{ marginTop: 16 }} open>
+        <summary className="card__h"><div><h2><Building2 size={15} className="h-ic" /> Hubs &amp; operational delays</h2><div className="sub">transfer = historical proxy · managers set temporary delays</div></div></summary>
         <div style={{ overflowX: "auto" }}>
           <table className="htbl">
             <thead><tr><th>Hub</th><th>Type</th><th>Avg transfer</th><th>Reliability</th><th>Operational delay</th><th></th></tr></thead>
-            <tbody>{hubs.map((h) => {
+            <tbody>{shown("hubs", hubs).map((h) => {
               const t = "avg_transfer_minutes" in h.transfer ? h.transfer : null;
               const hi = "reliability_pct" in h.history ? h.history : null;
               return (<tr key={h.id}><td><b>{h.name}</b> {weatherAlerts.includes(h.id) && <span className="chip chip--delay">Weather alert</span>} <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{h.id}</span></td>
@@ -54,15 +63,17 @@ export function Analytics({ onData }: { onData: () => void }) {
             })}</tbody>
           </table>
         </div>
-      </div>
+        {more("hubs", hubs.length)}
+      </details>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card__h"><div><h2><CloudLightning size={15} className="h-ic" /> Historical disruption log</h2><div className="sub">stoerungen.csv</div></div></div>
-        <div className="he">{dis.map((x, i) => (
+      <details className="card ni-section" style={{ marginTop: 16 }} open>
+        <summary className="card__h"><div><h2><CloudLightning size={15} className="h-ic" /> Historical disruption log</h2><div className="sub">stoerungen.csv</div></div></summary>
+        <div className="he">{shown("disruptions", dis).map((x, i) => (
           <div className="row" key={i}><span><b>{x.type}</b> · {x.from}{x.to !== x.from ? "→" + x.to : ""}<div style={{ fontSize: 12.5, color: "var(--muted)" }}>{x.description}</div></span>
             <span style={{ color: "var(--bad)", fontWeight: 700, whiteSpace: "nowrap" }}>{Math.round(x.volume_effect * 100)}% vol</span></div>
         ))}</div>
-      </div>
+        {more("disruptions", dis.length)}
+      </details>
 
       {delayFor && <DelayModal hub={delayFor} onClose={() => setDelayFor(null)} onSaved={() => { setDelayFor(null); load(); onData(); }} />}
     </>
