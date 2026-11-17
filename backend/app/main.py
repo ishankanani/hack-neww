@@ -516,6 +516,8 @@ class DecisionReq(BaseModel):
     quote_id: str = Field(min_length=1)
     reason: str = Field(min_length=3, max_length=1000)
     acknowledge_deadline: bool = False
+    supersedes_decision_id: Optional[str] = None
+    supersedes_updated_at: Optional[str] = None
 
 def _node(nid):
     if nid not in S["network"]["nodes"]: raise ValueError("Unknown hub")
@@ -698,6 +700,14 @@ def decision(req: DecisionReq):
     with LOCK:
         s=S["ships"].get(req.shipment_id)
         if not s: raise HTTPException(404,"Unknown shipment")
+        if s["status"]=="DELIVERED": raise ValueError("Delivery is confirmed. You can edit the decision note, but cannot change this journey.")
+        previous_decision=None
+        if req.supersedes_decision_id:
+            previous_decision=next((d for d in S["operations"].data["decisions"] if d["id"]==req.supersedes_decision_id),None)
+            if not previous_decision or previous_decision["shipment_id"]!=req.shipment_id: raise HTTPException(404,"Decision does not belong to this shipment")
+            if previous_decision.get("superseded_by"): raise HTTPException(409,"This decision has already been replaced. Open its latest revision.")
+            if req.supersedes_updated_at!=previous_decision["updated_at"]: raise HTTPException(409,"Decision changed. Refresh history before revising it.")
+        if len(req.reason.strip())<3: raise ValueError("Enter a decision reason of at least three characters")
         ops=S["ships"].context_for(s)["operations"]
         if req.revision!=ops.data["revision"]: raise HTTPException(409,"Conditions changed. Recalculate before deciding.")
         if req.option>=len(s["options"]): raise ValueError("Invalid option")
@@ -712,9 +722,31 @@ def decision(req: DecisionReq):
             if warning: raise HTTPException(409,warning)
         elif req.action=="hold":
             S["ships"].hold(req.shipment_id,req.option,req.reason)
-        row=S["operations"].put("decisions",{**req.model_dump(),"path":s["route"],"eta":s["current_eta"],"reviewed_path":option["path"],"reviewed_eta":option["eta"],"data_kind":s.get("data_kind","user"),"previous_route":previous_route})
+        row=S["operations"].put("decisions",{**req.model_dump(exclude_none=True),"reason":req.reason.strip(),"created_at":_now_iso(),"path":s["route"],"eta":s["current_eta"],"reviewed_path":option["path"],"reviewed_eta":option["eta"],"data_kind":s.get("data_kind","user"),"previous_route":previous_route})
+        if previous_decision:
+            S["operations"].put("decisions",{**previous_decision,"created_at":previous_decision.get("created_at",previous_decision["updated_at"]),"superseded_by":row["id"],"superseded_at":row["updated_at"]},previous_decision["id"])
         _audit("manager_decision",f"{req.shipment_id}: {req.action} — {req.reason}","MANAGER INPUT")
         return row
+
+
+class DecisionNoteReq(BaseModel):
+    reason: str = Field(min_length=3,max_length=1000)
+    expected_updated_at: str = Field(min_length=1)
+
+
+@app.patch("/api/decisions/{decision_id}")
+@serialized
+def edit_decision_note(decision_id:str, req:DecisionNoteReq):
+    original=next((d for d in S["operations"].data["decisions"] if d["id"]==decision_id),None)
+    if not original: raise HTTPException(404,"Unknown decision")
+    if original["updated_at"]!=req.expected_updated_at: raise HTTPException(409,"Decision changed. Refresh history before saving your edit.")
+    reason=req.reason.strip()
+    if len(reason)<3: raise ValueError("Enter a decision reason of at least three characters")
+    if reason==original["reason"]: return original
+    edits=[*original.get("reason_edits",[]),{"previous_reason":original["reason"],"reason":reason,"at":_now_iso()}]
+    row=S["operations"].put("decisions",{**original,"created_at":original.get("created_at",original["updated_at"]),"reason":reason,"reason_edits":edits},decision_id)
+    _audit("manager_decision_note_edited",f"{row['shipment_id']}: decision note updated","MANAGER INPUT")
+    return row
 
 @app.get("/api/assumptions")
 def assumptions():

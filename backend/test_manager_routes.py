@@ -47,3 +47,16 @@ def test_duplicate_hub_request_is_rejected(client):
     s=shipment(client)
     r=client.post(f"/api/shipments/{s['id']}/route-proposal",json={"via_hubs":["R29","R29"]})
     assert r.status_code==422 and "once" in r.json()["detail"]
+
+
+def test_multiple_requested_stops_keep_their_order_after_approval(client):
+    s=shipment(client)
+    r=client.post(f"/api/shipments/{s['id']}/route-proposal",json={"via_hubs":["R29","R10"]})
+    assert r.status_code==200,r.text
+    proposal=r.json()
+    i=next(i for i,o in enumerate(proposal["options"]) if o.get("manager_requested") and o["route_feasible"])
+    option=proposal["options"][i]
+    assert option["path"]==["R16","R29","R10","R21"]
+    result=client.post("/api/decisions",json={"shipment_id":s["id"],"action":"accept","option":i,"revision":option["revision"],"quote_id":option["quote_id"],"reason":"Use the ordered manager hub connection","acknowledge_deadline":True})
+    assert result.status_code==200,result.text
+    assert client.get(f"/api/shipments/{s['id']}").json()["route"]==option["path"]

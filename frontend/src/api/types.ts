@@ -107,7 +107,7 @@ export interface RerouteResp {
 export interface WeatherInput { node: string; start: string; end: string; temperature_c: number; condition: string; rain_mm: number; snow_cm: number; visibility_m: number; wind_kmh: number; severity: string; }
 export interface WeatherRecord extends WeatherInput { id: string; alert: boolean; level: string; delay_minutes: number; message: string; action: string; source: string; }
 export interface ScenarioEvent { id: string; kind: string; node?: string; origin?: string; destination?: string; start: string; end: string; minutes: number; reason: string; affected_count?:number; affected_shipments?:string[]; }
-export interface Decision { id: string; shipment_id: string; action: string; reason: string; updated_at: string; path: string[]; reviewed_path?:string[]; eta: string; }
+export interface Decision { id: string; shipment_id: string; action: string; reason: string; updated_at: string; created_at?:string; path: string[]; reviewed_path?:string[]; eta: string; superseded_by?:string; supersedes_decision_id?:string; reason_edits?:{previous_reason:string;reason:string;at:string}[]; }
 export interface WeatherZoneInput { kind:"snow"|"rain"|"tornado"; lat:number; lon:number; radius_km:number; start:string; end:string; }
 export interface WeatherZone extends WeatherZoneInput {id:string; updated_at:string;}
 export interface Operations { revision: number; weather: WeatherRecord[]; weather_zones: WeatherZone[]; events: ScenarioEvent[]; decisions: Decision[]; }

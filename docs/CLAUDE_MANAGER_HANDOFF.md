@@ -39,6 +39,22 @@ The local follow-up below records the subsequent fixes and release checks.
 
 ## User requirements
 
+### Hub-editor fixes and decision editing
+
+- Calculate now includes a hub still selected in the dropdown, even if Add stop
+  was not pressed. Changing that selection marks the proposal as uncalculated.
+  Future saved departure times are preserved; expired departures have a quick
+  correction. Moving journeys can submit a driver-reported location directly
+  from the hub editor; completed default hub stops are excluded from replanning.
+- Decision history offers Edit decision: save a corrected note with previous
+  text retained, or reopen the shipment for a fresh review and replacement action.
+  Replacement decisions link both records. Quote, capacity, weather, position and
+  deadline checks still apply. Concurrent edits/replacements return a conflict.
+- Eighteen focused manager-routing, decision-edit, road-option and progress checks
+  passed. Browser verified a dropdown-only Nürnberg selection was included in a
+  Würzburg–Dresden calculation, a note edit persisted with its previous text, and
+  changing the action reopened the correct journey in revision mode.
+
 ### Map notices added after the manager release
 
 - The planner, control-room review, new manager journey and shipment map receive
