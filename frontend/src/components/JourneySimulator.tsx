@@ -80,6 +80,7 @@ export interface Simulation {
 }
 
 interface Args {
+  enabled?: boolean;
   option: RouteOption | undefined;
   options: RouteOption[];
   nodes: NetNode[];
@@ -91,7 +92,7 @@ interface Args {
 
 const ZONE_DELAY: Record<string, number> = { snow: 110, rain: 65, tornado: 180 }; // same fixed assumption as the planner
 
-export function useJourneySimulation({ option: optionProp, options, nodes, deadline, truck, weatherZones = [], onCommitted }: Args): Simulation {
+export function useJourneySimulation({ enabled = true, option: optionProp, options, nodes, deadline, truck, weatherZones = [], onCommitted }: Args): Simulation {
   // While a run is under way it keeps its own route; the planner may pick another
   // route when weather changes, but the moving truck is rerouted from where it is.
   const [option, setSimOption] = useState(optionProp);
@@ -118,12 +119,12 @@ export function useJourneySimulation({ option: optionProp, options, nodes, deadl
   const injecting = useRef(false);
 
   const fallback = useMemo<LngLat[]>(() => {
-    if (!option) return [];
+    if (!enabled || !option) return [];
     const byId = new Map(nodes.map((n) => [n.id, n]));
     return option.path.flatMap((id) => { const n = byId.get(id); return n ? [[n.lon, n.lat] as LngLat] : []; });
-  }, [option, nodes]);
+  }, [enabled, option, nodes]);
 
-  const basePlan = useMemo(() => (option ? buildPlan(option, fallback) : null), [option, fallback]);
+  const basePlan = useMemo(() => (enabled && option ? buildPlan(option, fallback) : null), [enabled, option, fallback]);
   const originalPlan = replayPlan ?? basePlan;
   const plan = override ?? originalPlan;
 
@@ -144,10 +145,10 @@ export function useJourneySimulation({ option: optionProp, options, nodes, deadl
   }, [plan, replayPlan, basePlan]);
 
   // Quote IDs refresh routinely; reset only for a different road or input, and never in the middle of a run.
-  const optionKey = useMemo(() => optionProp ? JSON.stringify([optionProp.path, optionProp.depart_at, optionProp.geometry,
-    optionProp.zone_impacts, deadline, truck]) : "", [optionProp, deadline, truck]);
+  const optionKey = useMemo(() => enabled && optionProp ? JSON.stringify([optionProp.path, optionProp.depart_at, optionProp.geometry,
+    optionProp.zone_impacts, deadline, truck]) : "", [enabled, optionProp, deadline, truck]);
   const zonesKey = useMemo(() => JSON.stringify(weatherZones.map(z => [z.id, z.lon, z.lat, z.radius_km, z.start, z.end])), [weatherZones]);
-  useEffect(() => { if (!inProgress.current) reset(); }, [optionKey, reset]);
+  useEffect(() => { if (enabled && !inProgress.current) reset(); }, [enabled, optionKey, reset]);
   const routeChangedWhileRunning = !!optionProp && !!option && inProgress.current && optionProp.route_id !== option.route_id;
 
   // Animation loop.

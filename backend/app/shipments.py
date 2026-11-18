@@ -129,6 +129,10 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
             edge=cost_net["edges"].get(key,{"cost_eur":round(leg["km"]*2.6),"capacity_ldm":13.6})
             cost_net["edges"][key]={**edge,"km":leg["km"]}
         c=journey_cost(cost_net,path,ldm)
+        for leg in c["cost_per_leg"]:
+            key=f"{leg['from']}-{leg['to']}"
+            leg["basis"]="lane_tariff" if key in net["edges"] else "distance_estimate"
+            leg["tariff_eur"]=cost_net["edges"][key]["cost_eur"]
         known=all(a+"-"+b in net["edges"] for a,b in zip(path,path[1:]))
         surcharge=round(jr["detour_km"]*2.6*min(1,max(.15,ldm/13.6))) if avoid and known else 0
         c["transport_eur"]+=surcharge
@@ -151,7 +155,7 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
         return {**jr,"route_id":"-".join(path)+(f":road-{road_id}" if road_id else "")+(":clear" if avoid else ":normal"),"label":(f"Via {hub['name']} · clear detour" if hub else "Weather-safe road detour") if avoid else f"Via {hub['name']}" if hub else "Alternative road" if road_id else "Direct road estimate","kind":"dataset_lane" if known else "estimate",
                         "intermediate_hub":hub,"recommendation_note":"User-entered timetable applied; capacity is unverified." if jr.get("scheduled_services") else "Next eligible movement estimate — departure availability unverified.",
                         "is_demo":ctx.get("is_demo",False), "vehicle_constraints":"Truck profile requested" if "TomTom" in jr["data_sources"]["transport"] else "Vehicle restrictions unverified by fallback routing",
-                        "cost":{"transport_eur":c["transport_eur"],"fuel_l":c["fuel_l"],"fuel_eur":c["fuel_eur"],"distance_km":round(c["km"],1),"cost_per_kg":cost_per_kg(c["transport_eur"],weight_kg),"detour_surcharge_eur":surcharge},
+                        "cost":{"transport_eur":c["transport_eur"],"fuel_l":c["fuel_l"],"fuel_eur":c["fuel_eur"],"distance_km":round(c["km"],1),"cost_per_kg":cost_per_kg(c["transport_eur"],weight_kg),"detour_surcharge_eur":surcharge,"legs":c["cost_per_leg"]},
                         "risk":risk,"ldm":ldm,"historical":_hist_summary(hist),"revision":operations.data["revision"]}
     def evaluate_path(item):
         path,hub=item
@@ -271,7 +275,7 @@ def review_options(ctx, ship):
         option["connections"]=connection_warnings(option,ship.get("accepted_plan"))
         if current and option.get("dispatch_action")=="wait":
             option["comparison"]={"baseline":"Current itinerary without waiting, under the same conditions","money_saved_eur":current["cost"]["transport_eur"]-option["cost"]["transport_eur"],"minutes_saved":current["total_minutes"]-option["total_minutes"],"fuel_saved_l":current["cost"]["fuel_l"]-option["cost"]["fuel_l"]}
-            option["baseline_snapshot"]={k:deepcopy(current[k]) for k in ("path","depart_at","eta","total_minutes","cost","revision")}
+            option["baseline_snapshot"]={k:deepcopy(current[k]) for k in ("path","depart_at","eta","total_minutes","cost","revision","components") if k in current}
     if remaining:
         for option in options:option["baseline_snapshot"]=deepcopy(option.get("baseline_snapshot",{}))
         for option in options:
