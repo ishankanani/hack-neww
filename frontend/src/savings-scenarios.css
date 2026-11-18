@@ -6,6 +6,7 @@
 .csv-savings-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .csv-savings-fields label { display: grid; gap: 7px; font-size: 13px; font-weight: 650; }
 .csv-savings-fields select { padding: 10px 12px; min-width: 0; }
+.csv-headline-freight { display: block; margin-top: 6px; }
 .csv-savings-source { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; color: var(--muted); font-size: 13px; }
 .csv-savings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .csv-savings-case { overflow: hidden; }

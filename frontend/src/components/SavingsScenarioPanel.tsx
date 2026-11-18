@@ -33,6 +33,7 @@ export function SavingsScenarioPanel({
   const results = data?.lane === lane && data.reserve === reserve && data.objective === objective
     ? data
     : null;
+  const summary = results?.lane_summary;
 
   return <section aria-label="CSV dispatch scenarios" className="csv-savings">
     <div className="card csv-savings-controls">
@@ -56,8 +57,26 @@ export function SavingsScenarioPanel({
 
     {loading && <div className="card empty" role="status"><Loader2 size={18} className="spin"/> Calculating scenarios…</div>}
     {!loading && !error && results && <>
+      {summary && <section className="savings-headline" aria-label="Estimated lane savings">
+        <div className="savings-headline-main">
+          <span className="eyebrow">SIMULATED DISPATCH SAVINGS</span>
+          <strong>{summary.saving_eur > 0 ? "+" : summary.saving_eur < 0 ? "−" : ""}{eur(Math.abs(summary.saving_eur))}</strong>
+          <small>{summary.days.toLocaleString("en-GB")} days · {dateLabel(summary.first_date)} – {dateLabel(summary.last_date)}</small>
+          <small className="csv-headline-freight">
+            {summary.additional_dispatch_ldm > 0
+              ? `${ldm(summary.additional_dispatch_ldm)} more freight sent across those days`
+              : "Same amount of freight sent each day"}
+          </small>
+        </div>
+        <div className="savings-breakdown">
+          <span><small>Recorded plan estimate</small><b>{eur(summary.recorded_cost_eur)}</b></span>
+          <span><small>Simulated plan estimate</small><b>{eur(summary.simulated_cost_eur)}</b></span>
+        </div>
+      </section>}
       <div className="csv-savings-source">
-        <span>{results.rows_scanned.toLocaleString("en-GB")} days analysed on this lane{results.rows_excluded > 0 ? ` · ${results.rows_excluded} inconsistent rows excluded` : ""}</span>
+        <span>{summary
+          ? `${summary.cheaper_days} lower cost · ${summary.equal_days} same cost · ${summary.costlier_days} higher cost`
+          : `${results.rows_scanned} days analysed`}{results.rows_excluded > 0 ? ` · ${results.rows_excluded} inconsistent rows excluded` : ""}</span>
         <span>{eur(results.regular_rate_eur)} regular · {eur(results.special_rate_eur)} special trip</span>
       </div>
       <div className="csv-savings-grid">
@@ -96,7 +115,7 @@ export function SavingsScenarioPanel({
         <summary>How the simulation works</summary>
         <p>The cases come from <i>disposition.csv</i>. We select the highest utilisation day with no extras or deferrals, the most special trips, the largest deferred load, and the most surplus trailers on days without extras or deferrals. A category appears when the selected lane has a matching day.</p>
         <p>Both plans use the tariffs in <i>relationen.csv</i>. The model uses {ldm(results.target_capacity_ldm)} per trailer as the planning target, allowing the recorded average load when higher, up to the {ldm(results.rated_capacity_ldm)} trailer limit. It assumes the day's demand is known in advance and that the selected reserve can be booked at the regular tariff. It can cancel recorded surplus trailers and use up to the recorded number of special trips.</p>
-        <p>These are simulated changes in same-day dispatch cost. Later dispatch costs, cancellation fees, delivery times and revenue are outside this comparison. LDM means loading metres.</p>
+        <p>The lane total sums every eligible day. The model calculates each day independently using the selected reserve and dispatch goal. Later dispatch costs, cancellation fees, delivery times and revenue are outside this comparison. LDM means loading metres.</p>
       </details>
     </>}
   </section>;

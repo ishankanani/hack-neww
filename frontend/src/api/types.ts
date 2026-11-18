@@ -105,6 +105,18 @@ export interface SavingsScenarios {
   special_rate_eur: number;
   rows_scanned: number;
   rows_excluded: number;
+  lane_summary: {
+    days: number;
+    first_date: string;
+    last_date: string;
+    recorded_cost_eur: number;
+    simulated_cost_eur: number;
+    saving_eur: number;
+    cheaper_days: number;
+    equal_days: number;
+    costlier_days: number;
+    additional_dispatch_ldm: number;
+  } | null;
   scenarios: SavingsScenario[];
 }
 export interface DisruptionSavings {

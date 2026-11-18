@@ -94,8 +94,30 @@ class SavingsScenarios:
             "regular_rate_eur": lane.regular_rate, "special_rate_eur": lane.special_rate,
             "rows_scanned": len(days) + self.excluded.get(lane_id, 0),
             "rows_excluded": self.excluded.get(lane_id, 0),
+            "lane_summary": summarize_lane(days, lane, reserve, objective),
             "scenarios": [compare_day(kind, day, lane, reserve, objective) for kind, day in cases if day],
         }
+
+
+def summarize_lane(days, lane, reserve, objective):
+    if not days:
+        return None
+    replay = [compare_day("daily", day, lane, reserve, objective) for day in days]
+    recorded_cost = sum(row["historical"]["cost_eur"] for row in replay)
+    simulated_cost = sum(row["simulation"]["cost_eur"] for row in replay)
+    differences = [row["difference_eur"] for row in replay]
+    return {
+        "days": len(days),
+        "first_date": min(day.date for day in days),
+        "last_date": max(day.date for day in days),
+        "recorded_cost_eur": recorded_cost,
+        "simulated_cost_eur": simulated_cost,
+        "saving_eur": recorded_cost - simulated_cost,
+        "cheaper_days": sum(value > 0 for value in differences),
+        "equal_days": differences.count(0),
+        "costlier_days": sum(value < 0 for value in differences),
+        "additional_dispatch_ldm": round(sum(row["additional_dispatch_ldm"] for row in replay), 1),
+    }
 
 
 def compare_day(kind, day, lane, reserve, objective):
