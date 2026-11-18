@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import zlib
+import contextvars
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
@@ -164,6 +165,11 @@ def load(key, fallback, force=False):
         payload, version = connection.execute("SELECT payload,version FROM dachser_state WHERE name=%s", (key,)).fetchone()
         _versions[key] = version
         return json.loads(zlib.decompress(bytes(payload)))
+
+
+# Keys whose version this request already checked (set by the API middleware), so
+# later code in the same request does not ask the database again.
+refreshed = contextvars.ContextVar("refreshed", default=frozenset())
 
 
 def load_many(fallbacks):

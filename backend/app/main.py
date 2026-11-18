@@ -104,11 +104,11 @@ async def fresh_api_responses(request,call_next):
     started=time.perf_counter();db_ms=0.0
     if persistence.configured() and not stateless and (request.method=="GET" or request.url.path=="/api/route"):
         from starlette.concurrency import run_in_threadpool
-        try:await run_in_threadpool(refresh_shared_state)
+        try:persistence.refreshed.set(await run_in_threadpool(refresh_shared_state))
         except persistence.StorageUnavailable:
             # A pooled connection may have been closed by the database; retry once on a fresh one.
             persistence.reset_pool()
-            try:await run_in_threadpool(refresh_shared_state)
+            try:persistence.refreshed.set(await run_in_threadpool(refresh_shared_state))
             except persistence.StorageUnavailable as exc:
                 return JSONResponse(status_code=503,content={"detail":str(exc)},headers={"Cache-Control":"no-store"})
         db_ms=(time.perf_counter()-started)*1000
@@ -121,15 +121,22 @@ async def fresh_api_responses(request,call_next):
 
 
 def refresh_shared_state():
-    if not persistence.configured() or "ships" not in S:return
+    if not persistence.configured() or "ships" not in S:return frozenset()
+    from .demo import _sessions
     with LOCK,persistence.session():
-        fresh=persistence.load_many({"operations.json":S["operations"].data,"shipments.json":S["ships"].data})
+        # Saved journeys, operations and every demo session this worker has open: one query.
+        demo_keys={f"demo/{sid}/operations.json":ops for sid,ops in list(_sessions.items())}
+        fresh=persistence.load_many({"operations.json":S["operations"].data,"shipments.json":S["ships"].data,
+                                     **{key:ops.data for key,ops in demo_keys.items()}})
+        for key,ops_obj in demo_keys.items():
+            if key in fresh:ops_obj.data=fresh[key]
         ops=fresh.get("operations.json");ships=fresh.get("shipments.json")
         if ops is not None:
             S["operations"].data=ops
             S["hub_delays"]=ops.setdefault("hub_delays",{})
             S["ships"].ctx["hub_delays"]=S["hub_delays"]
         if ships is not None:S["ships"].data=ships
+    return frozenset(["operations.json","shipments.json",*demo_keys])
 
 
 def serialized(fn):

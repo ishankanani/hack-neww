@@ -21,6 +21,8 @@ def _operations(session, directory):
     cached = _sessions.get(session)
     if persistence.configured():
         if cached is not None:
+            if key in persistence.refreshed.get():
+                return cached  # already version-checked (and reloaded if needed) at the start of this request
             fresh = persistence.load(key, cached.data)  # None while the version is unchanged
             if fresh is not None:
                 cached.data = fresh
