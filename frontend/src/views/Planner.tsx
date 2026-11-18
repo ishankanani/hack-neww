@@ -6,13 +6,22 @@ import { RouteCompare } from "../components/RouteCompare";
 import { SavedJourneys } from "../components/SavedJourneys";
 import { localInput } from "../lib";
 import { TransportCalendar } from "../components/TransportCalendar";
-type TruckInput = Record<keyof TruckProfile, string>;
+type TruckDims = Record<"height_m"|"width_m"|"length_m", string>;
 const truckRules = [
  ["height_m", "Height", 1.5, 4.5],
  ["width_m", "Width", 1.5, 2.6],
  ["length_m", "Length", 3, 20],
- ["gross_weight_kg", "Gross vehicle weight", 1000, 50000],
 ] as const;
+// Weights are derived from the truck, never typed in. Empty weight is a planning estimate from the
+// vehicle length; the maximum is the German/EU gross-weight limit for that vehicle class.
+export function truckWeights(lengthRaw:string,loadRaw:string){
+ const length=Number(lengthRaw),load=Number(loadRaw);
+ const L=Number.isFinite(length)?length:0;
+ const tare=Math.round((4000+640*L)/100)*100;
+ const max=L>12?40000:L>10?26000:18000;
+ const gross=tare+(Number.isFinite(load)&&load>0?Math.round(load):0);
+ return {tare,max,gross,vehicle:L>12?"Articulated truck (5 axles)":L>10?"Rigid truck (3 axles)":"Rigid truck (2 axles)"};
+}
 function rangeError(raw:string,min:number,max:number,label:string){
  if(!raw.trim())return `${label} is required.`;
  const n=Number(raw);
@@ -20,19 +29,19 @@ function rangeError(raw:string,min:number,max:number,label:string){
  if(n<min||n>max)return `${label} must be between ${min.toLocaleString()} and ${max.toLocaleString()}${label.includes("weight")?" kg":""}.`;
  return "";
 }
-function validatePlannerInputs(v:{origin:string;destination:string;depart:string;deadline:string;weight:string;value:string;truck:TruckInput}){
+function validatePlannerInputs(v:{origin:string;destination:string;depart:string;deadline:string;weight:string;value:string;truck:TruckDims}){
  const errors:Record<string,string>={};
  if(v.origin===v.destination)errors.destination="Choose a destination different from the origin.";
  if(!v.depart)errors.depart="Choose a departure date and time.";
  else if(!Number.isFinite(Date.parse(v.depart)))errors.depart="Enter a valid departure date and time.";
  if(v.deadline&&!Number.isFinite(Date.parse(v.deadline)))errors.deadline="Enter a valid delivery deadline.";
  else if(v.deadline&&v.depart&&Date.parse(v.deadline)<=Date.parse(v.depart))errors.deadline="Delivery deadline must be later than departure.";
- errors.weight=rangeError(v.weight,1,23800,"Shipment weight");
+ const w=truckWeights(v.truck.length_m,v.weight);
+ errors.weight=rangeError(v.weight,1,Math.max(1,w.max-w.tare),"Shipment weight");
+ if(!errors.weight&&w.gross>w.max)errors.weight=`Too heavy: ${w.gross.toLocaleString()} kg gross exceeds the ${w.max.toLocaleString()} kg maximum for this truck.`;
  if(!v.value.trim())errors.value="";
  else errors.value=rangeError(v.value,0,100000000,"Shipment value");
  for(const [key,label,min,max] of truckRules)errors[key]=rangeError(v.truck[key],min,max,label);
- const weight=Number(v.weight),gross=Number(v.truck.gross_weight_kg);
- if(Number.isFinite(weight)&&Number.isFinite(gross)&&weight>gross)errors.gross_weight_kg="Gross vehicle weight must be at least the shipment weight.";
  return Object.fromEntries(Object.entries(errors).filter(([,message])=>message)) as Record<string,string>;
 }
 export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNode[];revision:number;onChange:()=>void;onReview:(id?:string)=>void;onSaved?:(shipment:Shipment)=>void}){
@@ -45,12 +54,13 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
  const [selected,setSelected]=useState(0);
  const [saveTick,setSaveTick]=useState(0);
  const selection=useRef<string|undefined>();selection.current=resp?.options[selected]?.route_id;
- const [optimization,setOptimization]=useState("fastest");
+ const optimization="fastest"; // every option is shown side by side; no user choice needed
  const plannerPanel=useRef<HTMLElement|null>(null);
  const [refreshing,setRefreshing]=useState(false);
  const [sample,setSample]=useState<JourneyExample|null>(null),[sampleWeather,setSampleWeather]=useState(false);
- const [truck,setTruck]=useState<TruckInput>({height_m:"4",width_m:"2.55",length_m:"16.5",gross_weight_kg:"40000"});
- const truckProfile:TruckProfile={height_m:Number(truck.height_m),width_m:Number(truck.width_m),length_m:Number(truck.length_m),gross_weight_kg:Number(truck.gross_weight_kg)};
+ const [truck,setTruck]=useState<TruckDims>({height_m:"4",width_m:"2.55",length_m:"16.5"});
+ const weights=truckWeights(truck.length_m,weight);
+ const truckProfile:TruckProfile={height_m:Number(truck.height_m),width_m:Number(truck.width_m),length_m:Number(truck.length_m),gross_weight_kg:weights.gross};
  const inputErrors=validatePlannerInputs({origin,destination:dest,depart,deadline,weight,value,truck});
  const inputInvalid=Object.keys(inputErrors).length>0;
  const requestId=useRef(0);const lastBody=useRef<Parameters<typeof api.route>[0]|null>(null);
@@ -127,17 +137,19 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
     <button className="btn btn--mint" disabled={loading||refreshing||inputInvalid||!nodes.length}>{loading?<Loader2 className="spin" size={17}/>:<ArrowUpRight size={17}/>} {loading?"Calculating…":"Find best routes"}</button>
    </div>
    <details className="shipment-settings" open>
-    <summary>Shipment details &amp; optimization <span>{weight} kg · {optimization}</span></summary>
+    <summary>Shipment details <span>{Number(weight).toLocaleString("en-GB")} kg load</span></summary>
     <div className="plan-secondary">
-     <label>Weight · kg<input aria-label="Weight kg" aria-invalid={!!inputErrors.weight} required type="number" min="1" max="23800" step="1" value={weight} onChange={e=>setWeight(e.target.value)}/>{inputErrors.weight&&<small className="field-error">{inputErrors.weight}</small>}</label>
+     <label>Weight · kg<input aria-label="Weight kg" aria-invalid={!!inputErrors.weight} required type="number" min="1" max={Math.max(1,weights.max-weights.tare)} step="1" value={weight} onChange={e=>setWeight(e.target.value)}/>{inputErrors.weight&&<small className="field-error">{inputErrors.weight}</small>}</label>
      <label>Shipment value · €<input aria-label="Shipment value" aria-invalid={!!inputErrors.value} type="number" min="0" max="100000000" step="0.01" value={value} onChange={e=>setValue(e.target.value)}/>{inputErrors.value&&<small className="field-error">{inputErrors.value}</small>}</label>
      <label>Deliver by · local time<input aria-label="Deliver by" aria-invalid={!!inputErrors.deadline} type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)}/>{inputErrors.deadline&&<small className="field-error">{inputErrors.deadline}</small>}</label>
-     <label>Optimize for<select aria-label="Optimization goal" value={optimization} onChange={e=>setOptimization(e.target.value)}><option value="fastest">Fastest arrival</option><option value="cost">Lowest cost within deadline</option><option value="balanced">Balanced · €50 per transit hour</option></select></label>
+     
     </div>
    </details>
    <details className="truck-settings" open>
     <summary>Truck details</summary>
-    <div className="truck-fields">{truckRules.map(([key,label,min,max])=><label key={key}>{label}{key==="gross_weight_kg"?" (kg)":" (m)"}<input aria-label={label} aria-invalid={!!inputErrors[key]} required type="number" min={min} max={max} step="any" value={truck[key]} onChange={e=>setTruck({...truck,[key]:e.target.value})}/>{inputErrors[key]&&<small className="field-error">{inputErrors[key]}</small>}</label>)}</div>
+    <div className="truck-fields">{truckRules.map(([key,label,min,max])=><label key={key}>{label} (m)<input aria-label={label} aria-invalid={!!inputErrors[key]} required type="number" min={min} max={max} step="any" value={truck[key]} onChange={e=>setTruck({...truck,[key]:e.target.value})}/>{inputErrors[key]&&<small className="field-error">{inputErrors[key]}</small>}</label>)}
+     <label>Gross vehicle weight (kg)<input aria-label="Gross vehicle weight" readOnly tabIndex={-1} className="calculated-field" value={weights.gross.toLocaleString("en-GB")} title="Calculated: estimated empty truck + shipment weight"/><small className="field-hint">Auto · {weights.tare.toLocaleString("en-GB")} kg empty truck + load</small></label>
+     <label>Maximum weight (kg)<input aria-label="Maximum weight" readOnly disabled className="calculated-field" value="" placeholder={`${weights.max.toLocaleString("en-GB")} kg`}/><small className="field-hint">Auto · {weights.vehicle}</small></label></div>
    </details>
   </form>
   <TransportCalendar departure={depart} rules={planningRules} onRulesChange={setPlanningRules} onSelectDate={day=>setDepart(day+depart.slice(10))}/>

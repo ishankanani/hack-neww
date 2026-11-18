@@ -29,12 +29,22 @@ def test_no_break_is_added_after_the_journey_has_finished():
     assert not result["pauses"]
 
 
-def test_daily_limit_uses_regular_11_hour_rest():
+def test_long_leg_gets_breaks_but_no_11_hour_rest():
+    # Several drivers are available, so no daily rest is planned; only the 4½ h / 45 min break.
     start=utc("2026-11-17T06:00:00+01:00")
     result=drive_with_driver_rules(start,541,{},DriverClock(start))
-    assert [p["kind"] for p in result["pauses"]]==["driver_break","driver_rest"]
-    assert [p["minutes"] for p in result["pauses"]]==[45,660]
-    assert result["arrival"]==start+timedelta(minutes=541+45+660)
+    assert [p["kind"] for p in result["pauses"]]==["driver_break","driver_break"]
+    assert [p["minutes"] for p in result["pauses"]]==[45,45]
+    assert result["arrival"]==start+timedelta(minutes=541+90)
+
+
+def test_driver_change_at_hub_resets_the_break_clock():
+    start=utc("2026-11-17T06:00:00+01:00")
+    clock=DriverClock(start)
+    first=drive_with_driver_rules(start,240,{},clock)
+    clock.new_leg()
+    second=drive_with_driver_rules(first["arrival"],240,{},clock)
+    assert not first["pauses"] and not second["pauses"]
 
 
 def test_hub_handling_does_not_reset_driving_clock():
@@ -66,8 +76,8 @@ def test_rest_is_planned_inside_long_sunday_wait_without_double_counting():
     clock=DriverClock(start)
     result=drive_with_driver_rules(start,120,{},clock)
     assert result["arrival"].astimezone(BERLIN).isoformat()=="2026-11-22T23:00:00+01:00"
-    assert clock.rest_minutes==660
-    assert len(result["pauses"])==1 and "includes 660" in result["pauses"][0]["reason"]
+    assert clock.rest_minutes==0 and clock.break_minutes==45
+    assert len(result["pauses"])==1 and "includes 45" in result["pauses"][0]["reason"]
 
 
 def test_public_holiday_is_not_automatically_a_truck_ban():
@@ -112,9 +122,9 @@ def test_real_journey_emits_break_steps_and_shared_minutes():
     providers=SimpleNamespace(routing=LongRoad(),traffic=Traffic())
     nodes={x:{"id":x,"name":x,"lat":49,"lon":9+i,"type":"branch"} for i,x in enumerate(["A","B","C"])}
     journey=compute_journey({"nodes":nodes,"edges":{}},{},{},{},providers,"A","C",start,["A","B","C"],planning_rules={"region":"DE-BW","company_sunday_hold":False,"trailer_attached":True})
-    breaks=[s for s in journey["steps"] if s["type"]=="driver_break"]
-    assert len(breaks)==1 and breaks[0]["minutes"]==45
-    assert journey["components"]["driver_break"]==45
+    # 3 h + 3 h with a driver change at hub B: no break is needed on either leg.
+    assert not [s for s in journey["steps"] if s["type"] in {"driver_break","driver_rest","weekly_rest"}]
+    assert journey["components"]["driver_break"]==0
     assert sum(s["minutes"] for s in journey["steps"])==journey["total_minutes"]
     assert journey["planning_rules"]["region"]=="DE-BW"
 
@@ -131,15 +141,30 @@ def test_saved_journey_keeps_calendar_rules_during_manager_replanning(client):
     assert replan.status_code==200,replan.text
     requested=next(o for o in replan.json()["options"] if o.get("manager_requested"))
     assert requested["planning_rules"]==rules
-    assert requested["driver_plan"] and "fully rested" in requested["driver_plan"]["assumption"]
+    assert requested["driver_plan"] and "every hub" in requested["driver_plan"]["assumption"]
 
 
-def test_daily_and_weekly_limits_are_never_reset_by_midnight():
+def test_midnight_does_not_reset_the_break_clock_and_no_daily_rest_is_added():
     start=utc("2026-11-16T23:00:00+01:00")
     clock=DriverClock(start)
     result=drive_with_driver_rules(start,600,{},clock)
-    assert any(p["kind"]=="driver_rest" for p in result["pauses"])
-    assert clock.by_week[clock.week(start)]==600*60
+    assert [p["kind"] for p in result["pauses"]]==["driver_break","driver_break"]
+    assert result["pauses"][0]["start"]==start+timedelta(minutes=270)
+
+
+def test_single_long_leg_in_a_real_journey_gets_one_break():
+    start=utc("2026-11-17T06:00:00+01:00")
+    class LongRoad(Road):
+        def leg(self,a,b):
+            result=super().leg(a,b)
+            return {**result,"duration_minutes":300,"distance_km":330}
+    providers=SimpleNamespace(routing=LongRoad(),traffic=Traffic())
+    nodes={x:{"id":x,"name":x,"lat":49,"lon":9+i,"type":"branch"} for i,x in enumerate(["A","B"])}
+    journey=compute_journey({"nodes":nodes,"edges":{}},{},{},{},providers,"A","B",start,["A","B"],planning_rules={"region":"DE-BW","company_sunday_hold":False,"trailer_attached":True})
+    breaks=[s for s in journey["steps"] if s["type"]=="driver_break"]
+    assert len(breaks)==1 and breaks[0]["minutes"]==45
+    assert not [s for s in journey["steps"] if s["type"]=="driver_rest"]
+    assert sum(s["minutes"] for s in journey["steps"])==journey["total_minutes"]
 
 
 def test_dst_sunday_uses_berlin_wall_clock_22_not_a_fixed_22_hour_wait():
