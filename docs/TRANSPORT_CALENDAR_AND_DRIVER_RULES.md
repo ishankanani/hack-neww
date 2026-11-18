@@ -30,7 +30,7 @@ Official references are linked below.
   truck-ban date. State-specific Corpus Christi/Reformation/All Saints bans differ.
 - Relay driving: a rested driver takes over at every hub, so the driving clock
   restarts at each hub and only the driving time of one hub-to-hub leg counts.
-  Within a leg: at most 4.5 hours driving before a 45-minute break.
+  Within a leg: a 45-minute break only when driving exceeds 8 hours (after the 8th hour).
 - No 11-hour daily rest and no weekly rest are planned, because several drivers
   are available. Calendar midnight does not reset the break clock. A parked wait
   of 45 minutes or more (for example a ban or weekend hold) counts as the break,

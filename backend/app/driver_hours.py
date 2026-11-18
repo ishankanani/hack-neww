@@ -2,14 +2,14 @@
 
 DACHSER runs relay driving: a fresh driver takes over at each hub, so only the
 driving time between two hubs counts. Within one hub-to-hub leg the driver takes
-a 45-minute break after at most 4½ hours of driving. Daily (11 h) and weekly rests
+a 45-minute break only once more than 8 hours of driving have been done. Daily (11 h) and weekly rests
 are not planned, because several drivers are available. Handling is never a break.
 This is a prospective estimate, not a tachograph validator.
 """
 from datetime import timedelta
 from .restrictions import BERLIN, restriction_at, _next_restriction_start
 
-BREAK_AFTER = 270
+BREAK_AFTER = 480  # 8 hours of driving within one hub-to-hub leg
 BREAK = 45
 
 
@@ -57,7 +57,7 @@ class DriverClock:
 
     def required_pause(self, at):
         if self.since_break >= BREAK_AFTER*60:
-            return BREAK, "driver_break", "Driving break · 45 minutes after 4½ hours of driving"
+            return BREAK, "driver_break", "Driving break · 45 minutes after 8 hours of driving"
         return None
 
 
