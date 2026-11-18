@@ -53,7 +53,7 @@ export function TransportCalendar({departure, rules, onRulesChange, onSelectDate
           <ul className="calendar-holidays">{doc.days.filter(d=>d.holiday).map(d=><li key={d.date}><b>{d.date.slice(-2)} · {d.holiday}</b><span>{d.truck_ban?"Truck ban 00:00–22:00":"No additional StVO §30 truck ban"}</span></li>)}</ul>
         </>}
       </div><aside className="calendar-driver-rules">
-        <h3><Coffee size={17}/>Driver planning</h3><p><b>45 min break</b><span>After at most 4½ hours of driving, within one hub-to-hub leg.</span></p><p><b><Moon size={15}/>Driver change at every hub</b><span>A rested driver takes over, so the break clock restarts at each hub. No 11-hour daily rest is planned because several drivers are available.</span></p>
+        <h3><Coffee size={17}/>Driver planning</h3><p><b>45 min break</b><span>Only when a hub-to-hub leg has more than 8 hours of driving, after the 8th hour.</span></p><p><b><Moon size={15}/>Driver change at every hub</b><span>A rested driver takes over, so the break clock restarts at each hub. No 11-hour daily rest is planned because several drivers are available.</span></p>
         {option?.driver_plan&&<p className="calendar-assumption">{option.driver_plan.assumption} A parked wait of 45 min or more counts as the break.</p>}
         {!option&&<p className="calendar-assumption">Only driving time between two hubs counts. Loading is work, not a driving break. Relief-driver availability requires manager review.</p>}
         <p className="calendar-scope">{doc?.scope??"Calendar uses the selected German federal state."}</p>

@@ -12,48 +12,38 @@ def utc(value):
     return datetime.fromisoformat(value).astimezone(timezone.utc)
 
 
-def test_break_is_due_after_4_and_half_hours_not_8_hours():
+def test_no_break_for_legs_up_to_8_hours():
     start=utc("2026-11-17T06:00:00+01:00")
-    clock=DriverClock(start)
-    result=drive_with_driver_rules(start,271,{},clock)
-    assert result["arrival"] == start+timedelta(minutes=316)
-    pause=result["pauses"][0]
-    assert pause["kind"]=="driver_break" and pause["minutes"]==45
-    assert pause["start"]==start+timedelta(minutes=270)
-
-
-def test_no_break_is_added_after_the_journey_has_finished():
-    start=utc("2026-11-17T06:00:00+01:00")
-    result=drive_with_driver_rules(start,270,{},DriverClock(start))
-    assert result["arrival"]==start+timedelta(minutes=270)
+    result=drive_with_driver_rules(start,480,{},DriverClock(start))
+    assert result["arrival"]==start+timedelta(minutes=480)
     assert not result["pauses"]
 
 
-def test_long_leg_gets_breaks_but_no_11_hour_rest():
-    # Several drivers are available, so no daily rest is planned; only the 4½ h / 45 min break.
+def test_break_is_added_after_8_hours_not_after_4_and_half():
     start=utc("2026-11-17T06:00:00+01:00")
     result=drive_with_driver_rules(start,541,{},DriverClock(start))
-    assert [p["kind"] for p in result["pauses"]]==["driver_break","driver_break"]
-    assert [p["minutes"] for p in result["pauses"]]==[45,45]
-    assert result["arrival"]==start+timedelta(minutes=541+90)
+    assert [p["kind"] for p in result["pauses"]]==["driver_break"]
+    pause=result["pauses"][0]
+    assert pause["minutes"]==45 and pause["start"]==start+timedelta(minutes=480)
+    assert result["arrival"]==start+timedelta(minutes=541+45)
 
 
 def test_driver_change_at_hub_resets_the_break_clock():
     start=utc("2026-11-17T06:00:00+01:00")
     clock=DriverClock(start)
-    first=drive_with_driver_rules(start,240,{},clock)
+    first=drive_with_driver_rules(start,420,{},clock)
     clock.new_leg()
-    second=drive_with_driver_rules(first["arrival"],240,{},clock)
+    second=drive_with_driver_rules(first["arrival"],420,{},clock)
     assert not first["pauses"] and not second["pauses"]
 
 
 def test_hub_handling_does_not_reset_driving_clock():
     start=utc("2026-11-17T06:00:00+01:00")
     clock=DriverClock(start)
-    first=drive_with_driver_rules(start,180,{},clock)
+    first=drive_with_driver_rules(start,300,{},clock)
     second_start=first["arrival"]+timedelta(hours=2)
-    second=drive_with_driver_rules(second_start,180,{},clock)
-    assert second["pauses"][0]["start"]==second_start+timedelta(minutes=90)
+    second=drive_with_driver_rules(second_start,300,{},clock)
+    assert second["pauses"][0]["start"]==second_start+timedelta(minutes=180)
     assert second["pauses"][0]["minutes"]==45
 
 
@@ -148,8 +138,8 @@ def test_midnight_does_not_reset_the_break_clock_and_no_daily_rest_is_added():
     start=utc("2026-11-16T23:00:00+01:00")
     clock=DriverClock(start)
     result=drive_with_driver_rules(start,600,{},clock)
-    assert [p["kind"] for p in result["pauses"]]==["driver_break","driver_break"]
-    assert result["pauses"][0]["start"]==start+timedelta(minutes=270)
+    assert [p["kind"] for p in result["pauses"]]==["driver_break"]
+    assert result["pauses"][0]["start"]==start+timedelta(minutes=480)
 
 
 def test_single_long_leg_in_a_real_journey_gets_one_break():
@@ -157,7 +147,7 @@ def test_single_long_leg_in_a_real_journey_gets_one_break():
     class LongRoad(Road):
         def leg(self,a,b):
             result=super().leg(a,b)
-            return {**result,"duration_minutes":300,"distance_km":330}
+            return {**result,"duration_minutes":540,"distance_km":600}
     providers=SimpleNamespace(routing=LongRoad(),traffic=Traffic())
     nodes={x:{"id":x,"name":x,"lat":49,"lon":9+i,"type":"branch"} for i,x in enumerate(["A","B"])}
     journey=compute_journey({"nodes":nodes,"edges":{}},{},{},{},providers,"A","B",start,["A","B"],planning_rules={"region":"DE-BW","company_sunday_hold":False,"trailer_attached":True})
