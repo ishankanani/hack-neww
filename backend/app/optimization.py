@@ -16,7 +16,7 @@ def decorate(options, ctx, origin, destination, ldm, objective):
         o["optimization"]=objective
         o["quote_id"]=uuid4().hex
         o["evaluated_at"]=datetime.now(timezone.utc).isoformat()
-        o["baseline_snapshot"]={k:direct[k] for k in ("path","depart_at","eta","total_minutes","cost","revision")}
+        o["baseline_snapshot"]={k:direct[k] for k in ("path","depart_at","eta","total_minutes","cost","revision","components") if k in direct}
         o["comparison"]={"baseline":"Direct road option, same departure and conditions","money_saved_eur":direct["cost"]["transport_eur"]-o["cost"]["transport_eur"],"minutes_saved":direct["total_minutes"]-o["total_minutes"],"fuel_saved_l":direct["cost"]["fuel_l"]-o["cost"]["fuel_l"]}
         o["valid_until"]=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()
         net=ctx["network"];edges=[net["edges"].get(a+"-"+b) for a,b in zip(o["path"],o["path"][1:])]

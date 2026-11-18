@@ -1,0 +1,17 @@
+.optimization-insight.route-tradeoff { display: grid; gap: 14px; align-items: stretch; }
+.route-tradeoff header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.route-tradeoff header > span, .route-tradeoff h4 { color: var(--muted); font-size: 12px; }
+.route-tradeoff h4 { margin: 0; }
+.route-tradeoff-metrics, .route-tradeoff-costs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.route-tradeoff-metrics > div, .route-tradeoff-costs > div { min-width: 0; padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 9px; }
+.route-tradeoff-metrics b { display: block; margin: 5px 0; font-size: 16px; }
+.optimization-insight.route-tradeoff p { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; margin: 5px 0 0; }
+.route-tradeoff-details { border-top: 1px solid var(--line); padding-top: 9px; }
+.route-tradeoff-details summary { cursor: pointer; font-size: 13px; font-weight: 650; }
+.route-tradeoff-costs { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 10px 0; }
+.route-tradeoff-details ul { list-style: none; padding: 0; margin: 5px 0; }
+.route-tradeoff-details li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 12px; padding: 6px 0; font-size: 12px; }
+.route-tradeoff-details li span { color: var(--muted); }
+@media (max-width: 760px) {
+  .route-tradeoff-metrics, .route-tradeoff-costs { grid-template-columns: 1fr; }
+}

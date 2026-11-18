@@ -13,7 +13,7 @@ export function RouteWeatherReadout({ forecasts }: { forecasts: LiveWeather[] })
     }
     return [...unique.values()].sort((a,b) => Date.parse(a.valid_at) - Date.parse(b.valid_at));
   }, [forecasts]);
-  return <details className="route-weather-panel" open>
+  return <details className="route-weather-panel">
     <summary><CloudSun size={17}/><strong>Weather along the route</strong><span>{points.filter(p=>p.status==="FORECAST").length} forecast points</span></summary>
     {points.length ? <ul className="route-weather-grid">{points.map((point,index) => {
       const Icon = /snow/i.test(point.condition??"") ? CloudSnow : /rain|storm/i.test(point.condition??"") ? CloudRain : CloudSun;

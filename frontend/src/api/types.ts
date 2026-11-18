@@ -8,8 +8,9 @@ export interface OperationalDelay { minutes: number; reason: string; note?: stri
 export interface Hub extends NetNode { transfer: TransferStat | Record<string, never>; history: RelationHistory | Record<string, never>; operational_delay: OperationalDelay | null; expected_transfer_minutes: number; }
 
 export interface JourneyStep { type: "handling" | "drive" | "legal_wait" | "hub_delay" | "weekend_hold" | "weather" | "schedule_wait" | "manager_wait" | "driver_break" | "driver_rest" | "weekly_rest"; location: string; location_name: string; start: string; end: string; minutes: number; detail: string; source: string; }
-export interface Components { driver_break?:number; driver_rest?:number; weekly_rest?:number; transport: number; transfer: number; hub_delay: number; traffic: number; legal_wait: number; weekend_hold?: number; weather?: number; }
-export interface OptCost { transport_eur: number; fuel_l: number; fuel_eur: number; distance_km: number; cost_per_kg: number | null; }
+export interface Components { driver_break?:number; driver_rest?:number; weekly_rest?:number; transport: number; transfer: number; hub_delay: number; traffic: number; legal_wait: number; weekend_hold?: number; weather?: number; schedule_wait?: number; manager_wait?: number; }
+export interface CostLeg { from: string; to: string; transport_eur: number; tariff_eur: number; km: number; ldm_share: number; basis: "lane_tariff" | "distance_estimate"; }
+export interface OptCost { transport_eur: number; fuel_l: number; fuel_eur: number; distance_km: number; cost_per_kg: number | null; detour_surcharge_eur?: number; legs?: CostLeg[]; }
 export interface OptRisk { level: string; score: number; reasons: string[]; exposure_eur: number; deadline_ok: boolean; }
 export interface OptHistory { avg_cost_eur: number; avg_fuel_l: number; reliability_pct: number; samples: number; }
 export interface LiveWeather { id:string; lat:number; lon:number; status:string; source:string; name?:string; condition?:string; temperature_c?:number; rain_mm?:number; wind_kmh?:number; visibility_m?:number; level?:string; delay_minutes?:number; valid_at:string; fetched_at?:string; message?:string; }
@@ -32,6 +33,7 @@ export interface RouteOption {
   badges?:string[]; optimization?:string; live_weather?:LiveWeather[]; traffic_status?:string;
   traffic_sections?:{geometry:number[][];delay_minutes:number;description:string}[];
   comparison?:{baseline:string;money_saved_eur:number;minutes_saved:number;fuel_saved_l:number};
+  baseline_snapshot?:{path?:string[];total_minutes?:number;cost?:OptCost;components?:Components};
   historical_comparison?:{scope:string;matched:boolean;relations:string[];samples:number;normalized_cost_eur:number|null;cost_difference_eur:number|null;reliability_pct:number|null;note:string};
   revision?: number; weather_alerts?: WeatherRecord[];
   intermediate_hub?: { hub: string; name: string; reason: string; distance_to_destination_km: number; route_deviation_km: number } | null;
@@ -157,6 +159,9 @@ export interface WeatherInput { node: string; start: string; end: string; temper
 export interface WeatherRecord extends WeatherInput { id: string; alert: boolean; level: string; delay_minutes: number; message: string; action: string; source: string; }
 export interface ScenarioEvent { id: string; kind: string; node?: string; origin?: string; destination?: string; start: string; end: string; minutes: number; reason: string; affected_count?:number; affected_shipments?:string[]; }
 export interface Decision { id: string; shipment_id: string; action: string; reason: string; updated_at: string; created_at?:string; path: string[]; reviewed_path?:string[]; eta: string; superseded_by?:string; supersedes_decision_id?:string; reason_edits?:{previous_reason:string;reason:string;at:string}[]; decided_by?:string|null; previous_route?:string[]; reviewed_eta?:string; acknowledge_deadline?:boolean; }
+export interface DecisionResult extends Decision {
+  shipment_summary?: Pick<Shipment, "id" | "status" | "route" | "approved_at" | "current_eta" | "plan_change" | "alert" | "dispatch">;
+}
 export interface WeatherZoneInput { kind:"snow"|"rain"|"tornado"; lat:number; lon:number; radius_km:number; start:string; end:string; }
 export interface WeatherZone extends WeatherZoneInput {id:string; updated_at:string;}
 export interface Operations { revision: number; weather: WeatherRecord[]; weather_zones: WeatherZone[]; events: ScenarioEvent[]; decisions: Decision[]; }

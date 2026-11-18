@@ -1,8 +1,15 @@
-import type { Service, Performance, NetworkDoc, Hub, Provider, Holiday, AuditEvent, RouteResp, Shipment, Dashboard, SavingsResp, RerouteResp, HighValue, RelationStat, Disruption, OperationalDelay, MapConditions, TruckProfile, Operations, WeatherInput, WeatherRecord, WeatherZoneInput, WeatherZone, ScenarioEvent, Decision } from "./types";
+import type { Service, Performance, NetworkDoc, Hub, Provider, Holiday, AuditEvent, RouteResp, Shipment, Dashboard, SavingsResp, RerouteResp, HighValue, RelationStat, Disruption, OperationalDelay, MapConditions, TruckProfile, Operations, WeatherInput, WeatherRecord, WeatherZoneInput, WeatherZone, ScenarioEvent, Decision, DecisionResult } from "./types";
 export const BASE = import.meta.env.VITE_API_BASE ?? "/api";
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
+}
 async function req<T>(p: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${p}`, { cache:"no-store", headers: { "Content-Type": "application/json" }, ...init });
-  if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail ?? d; } catch { /* */ } throw new Error(Array.isArray(d)?d.map(x=>x.msg??String(x)).join("; "):String(d)); }
+  if (!r.ok) {
+    let detail = r.statusText, code: string | undefined;
+    try { const body = await r.json(); detail = body.detail ?? detail; code = body.code; } catch { /* body may be empty */ }
+    throw new ApiError(Array.isArray(detail)?detail.map(x=>x.msg??String(x)).join("; "):String(detail),r.status,code);
+  }
   return r.json() as Promise<T>;
 }
 export const api = {
@@ -22,7 +29,7 @@ export const api = {
   saveOutcome:(id:string,body:{actual_departure:string;actual_arrival:string;actual_cost_eur:number})=>req<Shipment>(`/shipments/${id}/outcome`,{method:"POST",body:JSON.stringify(body)}),
   startDemo:()=>req<Shipment>("/demo/start",{method:"POST"}),
   demoDisruption:(id:string)=>req<Shipment>(`/demo/${id}/disruption`,{method:"POST"}),
-  mapConditions: (geometry:number[][], at:string) => req<MapConditions>("/map-conditions",{method:"POST",body:JSON.stringify({geometry,at})}),
+  mapConditions: (geometry:number[][], at:string, signal?: AbortSignal) => req<MapConditions>("/map-conditions",{method:"POST",body:JSON.stringify({geometry,at}),signal}),
   operations: () => req<Operations>("/operations"),
   addWeatherZone:(body:WeatherZoneInput)=>req<WeatherZone>("/weather-zones",{method:"POST",body:JSON.stringify(body)}),
   updateWeatherZone:(id:string,body:WeatherZoneInput)=>req<WeatherZone>(`/weather-zones/${id}`,{method:"PUT",body:JSON.stringify(body)}),
@@ -33,7 +40,7 @@ export const api = {
   addEvent: (body: Omit<ScenarioEvent,"id">) => req<ScenarioEvent>("/events", {method:"POST",body:JSON.stringify(body)}),
   resolveEvent: (id: string) => req(`/events/${id}`, {method:"DELETE"}),
   replan: (id: string) => req<Shipment>(`/shipments/${id}/replan?from_now=true`, {method:"POST"}),
-  decide: (body: {shipment_id:string; action:string; option:number; revision:number; quote_id:string; reason:string; acknowledge_deadline:boolean;supersedes_decision_id?:string;supersedes_updated_at?:string;decided_by?:string}) => req<Decision>("/decisions", {method:"POST", body:JSON.stringify(body)}),
+  decide: (body: {shipment_id:string; action:string; option:number; revision:number; quote_id:string; reason:string; acknowledge_deadline:boolean;supersedes_decision_id?:string;supersedes_updated_at?:string;decided_by?:string;request_id?:string}) => req<DecisionResult>("/decisions", {method:"POST", body:JSON.stringify(body),signal:body.request_id?AbortSignal.timeout(30_000):undefined}),
   editDecision: (id:string,body:{reason:string;expected_updated_at:string})=>req<Decision>(`/decisions/${id}`,{method:"PATCH",body:JSON.stringify(body)}),
   network: () => req<NetworkDoc>("/network"),
   hubs: () => req<{ hubs: Hub[] }>("/hubs"),

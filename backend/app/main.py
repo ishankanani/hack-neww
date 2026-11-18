@@ -14,6 +14,7 @@ configure_runtime()
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,7 +32,7 @@ from .eta import compute_journey, _haversine_km
 from .providers import Providers
 from .restrictions import drive_with_restrictions
 from .risk import assess
-from .shipments import Shipments, plan as plan_options, savings_vs_baseline, shipment_visits_hub_during, shipment_traffic_exposure_minutes
+from .shipments import ApprovalReviewUpdated, Shipments, approval_paths, plan as plan_options, replan_input, review_options, savings_vs_baseline, shipment_visits_hub_during, shipment_traffic_exposure_minutes
 from . import savings as savings_engine
 from .savings_scenarios import SavingsScenarios
 from .dispatch import attention, action_comparison, approvable
@@ -92,14 +93,14 @@ app = FastAPI(title="DACHSER Live Transit Planner", version="3.0.0", lifespan=li
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(map_tiles_router)
 
-STATELESS_PATHS=("/api/map-tiles/","/api/health","/api/savings/scenarios","/api/transport-calendar",
-                 "/api/network","/api/providers","/api/holidays")
+STATELESS_ROUTES={"/api/health","/api/network","/api/providers","/api/holidays","/api/settings","/api/savings/scenarios","/api/transport-calendar"}
+STATELESS_PREFIXES=("/api/map-tiles/","/api/traffic-tiles/")
 
 
 @app.middleware("http")
 async def fresh_api_responses(request,call_next):
     # These endpoints do not read saved journeys or mutable operations data.
-    stateless=request.url.path.startswith(STATELESS_PATHS)
+    stateless=request.url.path in STATELESS_ROUTES or request.url.path.startswith(STATELESS_PREFIXES)
     started=time.perf_counter();db_ms=0.0
     if persistence.configured() and not stateless and (request.method=="GET" or request.url.path=="/api/route"):
         from starlette.concurrency import run_in_threadpool
@@ -138,6 +139,23 @@ def serialized(fn):
             refresh_shared_state()
             return fn(*args, **kwargs)
     return wrapped
+
+
+def planning_snapshot(context):
+    """Freeze planning inputs without copying every shipment's road geometry."""
+    ops=copy(context["operations"])
+    ops.data=deepcopy(ops.data)
+    summaries=[]
+    for ship in context["capacity_shipments"]:
+        plan=ship.get("accepted_plan") or {}
+        summaries.append({
+            **{k:ship.get(k) for k in ("id","origin","destination","status","approved_at","data_kind","demo_session","simulation_used")},
+            "vehicle_position":{"source":(ship.get("vehicle_position") or {}).get("source")},
+            "actual":deepcopy(ship.get("actual")),
+            "capacity_reservations":deepcopy(ship.get("capacity_reservations",[])),
+            "accepted_plan":{k:plan.get(k) for k in ("quote_id","eta","remaining_only","is_demo")},
+        })
+    return {**context,"operations":ops,"hub_delays":deepcopy(context["hub_delays"]),"capacity_shipments":summaries}
 
 @app.exception_handler(ValueError)
 async def invalid_request(request, exc):
@@ -296,23 +314,6 @@ def weather(node: str):
 
 
 # ---- planning ----
-def _capacity_snapshot(ships):
-    """Copy only what capacity and arrival checks read, not each journey's full route
-    geometry: deep-copying every saved journey made each route search seconds slower."""
-    out=[]
-    for s in ships:
-        plan=s.get("accepted_plan") or {}
-        position=s.get("vehicle_position") or {}
-        out.append({"id":s.get("id"),"approved_at":s.get("approved_at"),"status":s.get("status"),
-                    "origin":s.get("origin"),"destination":s.get("destination"),
-                    "capacity_reservations":deepcopy(s.get("capacity_reservations") or []),
-                    "actual":deepcopy(s.get("actual")) if s.get("actual") else None,
-                    "data_kind":s.get("data_kind"),"demo_session":s.get("demo_session"),"simulation_used":s.get("simulation_used"),
-                    "vehicle_position":{"source":position.get("source")} if position else None,
-                    "accepted_plan":{k:plan.get(k) for k in ("quote_id","remaining_only","eta","is_demo")} if plan else None})
-    return out
-
-
 @app.post("/api/route")
 def route(req: RouteReq):
     net = S["network"]
@@ -327,11 +328,7 @@ def route(req: RouteReq):
     # Routing waits on remote providers. Keep fleet/scenario polling responsive
     # and give every candidate the same operational revision throughout a search.
     with LOCK:
-        context=_ctx()
-        context["operations"]=copy(context["operations"])
-        context["operations"].data=deepcopy(context["operations"].data)
-        context["hub_delays"]=deepcopy(context["hub_delays"])
-        context["capacity_shipments"]=_capacity_snapshot(context["capacity_shipments"])
+        context=planning_snapshot(_ctx())
     revision=context["operations"].data["revision"]
     sample=None; zones=[]
     if req.sample_id:
@@ -422,13 +419,16 @@ def create_shipment(req: ShipmentReq):
 
 
 @app.post("/api/shipments/{sid}/schedule")
-@serialized
 def schedule_shipment(sid: str, option: int = 0, force: bool = False, quote_id: str = "", reason: str = ""):
     if len(reason.strip())<3 or not quote_id: raise ValueError("Manager reason and reviewed quote ID are required; use the control room")
-    ship=S["ships"].get(sid)
-    if not ship: raise HTTPException(404,"Unknown shipment")
-    if not 0<=option<len(ship["options"]): raise ValueError("Invalid option")
-    decision(DecisionReq(shipment_id=sid,action="accept",option=option,revision=ship["options"][option]["revision"],quote_id=quote_id,reason=reason,acknowledge_deadline=force))
+    with LOCK:
+        refresh_shared_state()
+        ship=S["ships"].get(sid)
+        if not ship: raise HTTPException(404,"Unknown shipment")
+        if not 0<=option<len(ship["options"]): raise ValueError("Invalid option")
+        revision=ship["options"][option]["revision"]
+    result=decision(DecisionReq(shipment_id=sid,action="accept",option=option,revision=revision,quote_id=quote_id,reason=reason,acknowledge_deadline=force))
+    if isinstance(result,Response):return result
     return {"scheduled":True,"shipment":S["ships"].get(sid)}
 
 
@@ -577,6 +577,7 @@ class DecisionReq(BaseModel):
     supersedes_decision_id: Optional[str] = None
     supersedes_updated_at: Optional[str] = None
     decided_by: Optional[str] = Field(default=None, max_length=80)  # name entered by the manager (no login yet)
+    request_id: Optional[UUID] = None
 
     @model_validator(mode="after")
     def clean_name(self):
@@ -590,13 +591,14 @@ def _node(nid):
 def operations():
     result = S["operations"].snapshot()
     result["weather"] = [evaluate(r) for r in result["weather"]]
+    ships=S["ships"].list() if result["events"] else []
     for event in result["events"]:
         if event["kind"] in {"hub_delay","closure"}:
-            affected=[s["id"] for s in S["ships"].list() if shipment_visits_hub_during(s,event)]
+            affected=[s["id"] for s in ships if shipment_visits_hub_during(s,event)]
             event["affected_count"]=len(affected)
             event["affected_shipments"]=affected
         elif event["kind"]=="traffic":
-            affected=[s["id"] for s in S["ships"].list() if shipment_traffic_exposure_minutes(s,event,pending_only=True)]
+            affected=[s["id"] for s in ships if shipment_traffic_exposure_minutes(s,event,pending_only=True)]
             event["affected_count"]=len(affected)
             event["affected_shipments"]=affected
     result["thresholds"] = THRESHOLDS
@@ -681,12 +683,29 @@ def resolve_event(rid: str):
     return {"ok":True}
 
 @app.post("/api/shipments/{sid}/replan")
-@serialized
 def replan_shipment(sid: str, from_now:bool=False):
-    if not S["ships"].get(sid): raise HTTPException(404,"Unknown shipment")
     with LOCK:
-        s=S["ships"].replan(sid,from_now=from_now)
-        return {**s,"dispatch_actions":action_comparison(s)}
+        refresh_shared_state()
+        ship=S["ships"].get(sid)
+        if not ship:raise HTTPException(404,"Unknown shipment")
+        snapshot=deepcopy({key:value for key,value in ship.items() if key!="options"})
+        quotes=[o.get("quote_id") for o in ship["options"]]
+        context=planning_snapshot(S["ships"].context_for(ship))
+    planned=replan_input(snapshot,from_now)
+    options=review_options(context,planned)
+    return _save_replan(sid,snapshot,quotes,context["operations"].data["revision"],planned["planned_departure"],options)
+
+
+@serialized
+def _save_replan(sid,snapshot,quotes,revision,departure,options):
+    ship=S["ships"].get(sid)
+    if not ship:raise HTTPException(404,"Unknown shipment")
+    current_context=S["ships"].context_for(ship)
+    if (revision!=current_context["operations"].data["revision"] or quotes!=[o.get("quote_id") for o in ship["options"]]
+            or any(ship.get(key)!=snapshot.get(key) for key in _APPROVAL_STATE)):
+        raise HTTPException(409,"Journey or conditions changed while recalculating. Try again for the latest plan.")
+    s=S["ships"].save_replan(sid,departure,options)
+    return {**s,"dispatch_actions":action_comparison(s)}
 
 
 class ManagerRouteReq(BaseModel):
@@ -758,39 +777,90 @@ def request_stop(sid:str,req:StopReq):
     S["operations"].put("decisions",{"shipment_id":sid,"action":"stop_request","reason":req.reason.strip(),"path":ship["route"],"eta":ship["current_eta"],"data_kind":ship.get("data_kind","user")})
     return {**ship,"dispatch_actions":action_comparison(ship)}
 
+def _decision_state(req):
+    s=S["ships"].get(req.shipment_id)
+    if not s:raise HTTPException(404,"Unknown shipment")
+    if s["status"]=="DELIVERED":raise ValueError("Delivery is confirmed. You can edit the decision note, but cannot change this journey.")
+    previous=None
+    if req.supersedes_decision_id:
+        previous=next((d for d in S["operations"].data["decisions"] if d["id"]==req.supersedes_decision_id),None)
+        if not previous or previous["shipment_id"]!=req.shipment_id:raise HTTPException(404,"Decision does not belong to this shipment")
+        if previous.get("superseded_by"):raise HTTPException(409,"This decision has already been replaced. Open its latest revision.")
+        if req.supersedes_updated_at!=previous["updated_at"]:raise HTTPException(409,"Decision changed. Refresh history before revising it.")
+    if len(req.reason.strip())<3:raise ValueError("Enter a decision reason of at least three characters")
+    ctx=S["ships"].context_for(s)
+    if req.revision!=ctx["operations"].data["revision"]:raise HTTPException(409,"Conditions changed. Recalculate before deciding.")
+    if req.option>=len(s["options"]):raise ValueError("Invalid option")
+    option=s["options"][req.option]
+    if option.get("revision",-1)!=req.revision:raise HTTPException(409,"Recalculate shipment options first")
+    if req.quote_id!=option.get("quote_id"):raise HTTPException(409,"Quote replaced. Recalculate and review again.")
+    return s,option,previous,ctx
+
+
+def _decision_response(row, ship):
+    summary={k:ship.get(k) for k in ("id","status","route","approved_at","current_eta","plan_change","alert")}
+    summary["dispatch"]=attention(ship,S["operations"])
+    return {**row,"shipment_summary":summary}
+
+
+def _saved_decision(req):
+    if req.request_id is None:return None
+    request_id=str(req.request_id)
+    row=next((d for d in S["operations"].data["decisions"] if d.get("request_id")==request_id),None)
+    if row is None:return None
+    if any(row.get(key)!=getattr(req,key) for key in ("shipment_id","action","quote_id")):
+        raise HTTPException(409,"This request already belongs to a different decision.")
+    return _decision_response(row,S["ships"].get(req.shipment_id))
+
+
+_APPROVAL_STATE=("status","planned_departure","scheduled_departure","movement_started_at","approved_at","vehicle_position",
+                 "reported_delay","manager_route_request","hold","stop_request","required_delivery","truck","planning_rules")
+
+
 @app.post("/api/decisions")
-@serialized
 def decision(req: DecisionReq):
+    if req.action!="accept":return _save_decision(req)
     with LOCK:
-        s=S["ships"].get(req.shipment_id)
-        if not s: raise HTTPException(404,"Unknown shipment")
-        if s["status"]=="DELIVERED": raise ValueError("Delivery is confirmed. You can edit the decision note, but cannot change this journey.")
-        previous_decision=None
-        if req.supersedes_decision_id:
-            previous_decision=next((d for d in S["operations"].data["decisions"] if d["id"]==req.supersedes_decision_id),None)
-            if not previous_decision or previous_decision["shipment_id"]!=req.shipment_id: raise HTTPException(404,"Decision does not belong to this shipment")
-            if previous_decision.get("superseded_by"): raise HTTPException(409,"This decision has already been replaced. Open its latest revision.")
-            if req.supersedes_updated_at!=previous_decision["updated_at"]: raise HTTPException(409,"Decision changed. Refresh history before revising it.")
-        if len(req.reason.strip())<3: raise ValueError("Enter a decision reason of at least three characters")
-        ops=S["ships"].context_for(s)["operations"]
-        if req.revision!=ops.data["revision"]: raise HTTPException(409,"Conditions changed. Recalculate before deciding.")
-        if req.option>=len(s["options"]): raise ValueError("Invalid option")
-        option=s["options"][req.option]
-        if option.get("revision",-1)!=req.revision: raise HTTPException(409,"Recalculate shipment options first")
-        if req.quote_id!=option.get("quote_id"): raise HTTPException(409,"Quote replaced. Recalculate and review again.")
-        previous_route=list(s["route"])
-        if req.action=="accept":
-            if option.get("avoidance_status") in {"IMPACTED", "NO_CLEAR_DETOUR"}:
-                raise HTTPException(409,"This route crosses an active simulated weather zone. Hold or defer the shipment, or choose a verified clear route.")
-            _, warning=S["ships"].schedule(req.shipment_id,req.option,req.acknowledge_deadline,req.quote_id,req.reason.strip())
-            if warning: raise HTTPException(409,warning)
-        elif req.action=="hold":
-            S["ships"].hold(req.shipment_id,req.option,req.reason)
-        row=S["operations"].put("decisions",{**req.model_dump(exclude_none=True),"reason":req.reason.strip(),"created_at":_now_iso(),"path":s["route"],"eta":s["current_eta"],"reviewed_path":option["path"],"reviewed_eta":option["eta"],"data_kind":s.get("data_kind","user"),"previous_route":previous_route})
-        if previous_decision:
-            S["operations"].put("decisions",{**previous_decision,"created_at":previous_decision.get("created_at",previous_decision["updated_at"]),"superseded_by":row["id"],"superseded_at":row["updated_at"]},previous_decision["id"])
-        _audit("manager_decision",f"{req.shipment_id}: {req.action} — {req.reason}","MANAGER INPUT")
-        return row
+        refresh_shared_state()
+        saved=_saved_decision(req)
+        if saved:return saved
+        ship,option,_,ctx=_decision_state(req)
+        if option.get("avoidance_status") in {"IMPACTED","NO_CLEAR_DETOUR"}:
+            raise HTTPException(409,"This route crosses an active simulated weather zone. Choose a clear route or hold the shipment.")
+        if not option.get("route_feasible",True) or not option.get("capacity",{}).get("feasible",True):
+            raise HTTPException(409,"This route is unavailable. Choose another option or recalculate.")
+        paths=approval_paths(ship,option)
+        snapshot=deepcopy({key:value for key,value in ship.items() if key!="options"})
+        ctx=planning_snapshot(ctx)
+    # Provider calls run outside both the process lock and the DB write transaction.
+    fresh=review_options(ctx,snapshot,only_paths=paths) if paths is not None else review_options(ctx,snapshot)
+    return _save_decision(req,snapshot,fresh,paths is not None)
+
+
+@serialized
+def _save_decision(req, snapshot=None, fresh=None, limited=False):
+    saved=_saved_decision(req)
+    if saved:return saved
+    s,option,previous_decision,_=_decision_state(req)
+    if snapshot is not None and any(s.get(key)!=snapshot.get(key) for key in _APPROVAL_STATE):
+        raise HTTPException(409,"Journey changed while checking the route. Recalculate and review it again.")
+    previous_route=list(s["route"])
+    if req.action=="accept":
+        try:
+            _,warning=S["ships"].schedule(req.shipment_id,req.option,req.acknowledge_deadline,req.quote_id,req.reason.strip(),
+                                          reviewed_options=fresh,limited=limited)
+        except ApprovalReviewUpdated as exc:
+            # Return after committing the updated choices. Raising inside the
+            # transaction would remove them and force another provider search.
+            return JSONResponse(status_code=422,content={"detail":str(exc),"code":"REVIEW_UPDATED"})
+        if warning:raise HTTPException(409,warning)
+    elif req.action=="hold":
+        S["ships"].hold(req.shipment_id,req.option,req.reason)
+    row=S["operations"].put("decisions",{**req.model_dump(mode="json",exclude_none=True),"reason":req.reason.strip(),"created_at":_now_iso(),"path":s["route"],"eta":s["current_eta"],"reviewed_path":option["path"],"reviewed_eta":option["eta"],"data_kind":s.get("data_kind","user"),"previous_route":previous_route})
+    if previous_decision:
+        S["operations"].put("decisions",{**previous_decision,"created_at":previous_decision.get("created_at",previous_decision["updated_at"]),"superseded_by":row["id"],"superseded_at":row["updated_at"]},previous_decision["id"])
+    _audit("manager_decision",f"{req.shipment_id}: {req.action} — {req.reason}","MANAGER INPUT")
+    return _decision_response(row,s)
 
 
 class DecisionNoteReq(BaseModel):

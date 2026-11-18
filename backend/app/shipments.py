@@ -105,14 +105,16 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     from .operations import parse
     net=ctx["network"]; operations=ctx["operations"]; ldm=_ldm(weight_kg)
     if ldm>13.6: raise ValueError("Shipment exceeds the prototype single-trailer capacity (13.6 loading metres). Split the shipment.")
-    road=ctx["providers"].routing.leg(ll(net["nodes"][origin]),ll(net["nodes"][destination]))
-    blocked={e["node"] for e in operations.data.get("events",[]) if e["kind"]=="closure" and e.get("node") and operations.overlaps(e,depart_utc,depart_utc+timedelta(days=7))}
-    selected=select_hubs(net["nodes"][origin],net["nodes"][destination],net["nodes"].values(),road,ctx["providers"].routing,{"blocked":blocked,"ldm":ldm})
-    paths=[([origin,destination],None)]+[([origin,h["hub"],destination],h) for h in selected]
-    for path in required_paths or []:
-        if all(n in net["nodes"] for n in path) and path not in [p for p,_ in paths]:
-            paths.append((path,None))
-    if only_paths is not None: paths=[(path,None) for path in only_paths]
+    if only_paths is not None:
+        paths=[(path,None) for path in only_paths]
+    else:
+        road=ctx["providers"].routing.leg(ll(net["nodes"][origin]),ll(net["nodes"][destination]))
+        blocked={e["node"] for e in operations.data.get("events",[]) if e["kind"]=="closure" and e.get("node") and operations.overlaps(e,depart_utc,depart_utc+timedelta(days=7))}
+        selected=select_hubs(net["nodes"][origin],net["nodes"][destination],net["nodes"].values(),road,ctx["providers"].routing,{"blocked":blocked,"ldm":ldm})
+        paths=[([origin,destination],None)]+[([origin,h["hub"],destination],h) for h in selected]
+        for path in required_paths or []:
+            if all(n in net["nodes"] for n in path) and path not in [p for p,_ in paths]:
+                paths.append((path,None))
     def build_option(path,hub,avoid=False,road_override=None,road_id=None):
         actual_departure=parse(wait_until) if wait_until else depart_utc
         jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid,skip_origin_handling=ctx.get("skip_origin_handling",False),road_overrides={(origin,destination):road_override} if road_override else None,planning_rules=ctx.get("planning_rules"))
@@ -129,6 +131,10 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
             edge=cost_net["edges"].get(key,{"cost_eur":round(leg["km"]*2.6),"capacity_ldm":13.6})
             cost_net["edges"][key]={**edge,"km":leg["km"]}
         c=journey_cost(cost_net,path,ldm)
+        for leg in c["cost_per_leg"]:
+            key=f"{leg['from']}-{leg['to']}"
+            leg["basis"]="lane_tariff" if key in net["edges"] else "distance_estimate"
+            leg["tariff_eur"]=cost_net["edges"][key]["cost_eur"]
         known=all(a+"-"+b in net["edges"] for a,b in zip(path,path[1:]))
         surcharge=round(jr["detour_km"]*2.6*min(1,max(.15,ldm/13.6))) if avoid and known else 0
         c["transport_eur"]+=surcharge
@@ -151,7 +157,7 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
         return {**jr,"route_id":"-".join(path)+(f":road-{road_id}" if road_id else "")+(":clear" if avoid else ":normal"),"label":(f"Via {hub['name']} · clear detour" if hub else "Weather-safe road detour") if avoid else f"Via {hub['name']}" if hub else "Alternative road" if road_id else "Direct road estimate","kind":"dataset_lane" if known else "estimate",
                         "intermediate_hub":hub,"recommendation_note":"User-entered timetable applied; capacity is unverified." if jr.get("scheduled_services") else "Next eligible movement estimate — departure availability unverified.",
                         "is_demo":ctx.get("is_demo",False), "vehicle_constraints":"Truck profile requested" if "TomTom" in jr["data_sources"]["transport"] else "Vehicle restrictions unverified by fallback routing",
-                        "cost":{"transport_eur":c["transport_eur"],"fuel_l":c["fuel_l"],"fuel_eur":c["fuel_eur"],"distance_km":round(c["km"],1),"cost_per_kg":cost_per_kg(c["transport_eur"],weight_kg),"detour_surcharge_eur":surcharge},
+                        "cost":{"transport_eur":c["transport_eur"],"fuel_l":c["fuel_l"],"fuel_eur":c["fuel_eur"],"distance_km":round(c["km"],1),"cost_per_kg":cost_per_kg(c["transport_eur"],weight_kg),"detour_surcharge_eur":surcharge,"legs":c["cost_per_leg"]},
                         "risk":risk,"ldm":ldm,"historical":_hist_summary(hist),"revision":operations.data["revision"]}
     def evaluate_path(item):
         path,hub=item
@@ -230,7 +236,7 @@ def savings_vs_baseline(recommended, baseline):
     }
 
 
-def review_options(ctx, ship):
+def review_options(ctx, ship, only_paths=None):
     """One reproducible option set for review and approval, including a bounded wait."""
     from .dispatch import connection_warnings
     from .progress import dispatched,position_context,attach_completed,VEHICLE_NODE
@@ -253,12 +259,12 @@ def review_options(ctx, ship):
         requested_path=validate_path(ctx["network"],origin,destination,request["via_hubs"])
         if request.get("depart_at") and not remaining:
             args=(*args[:3],parse(request["depart_at"]),*args[4:])
-    options=plan(*args,required_paths=[path]+([requested_path] if requested_path else []))
+    options=plan(*args,required_paths=[path]+([requested_path] if requested_path else []),only_paths=only_paths)
     if requested_path:
         for option in options:option["manager_requested"]=option["path"]==requested_path
     current=next((o for o in options if o["path"]==path and o.get("avoidance_status")!="CLEAR"),None)
     departure=parse(ship["planned_departure"])
-    if current and not ship.get("vehicle_position"):
+    if only_paths is None and current and not ship.get("vehicle_position"):
         zone_ids={z["id"] for z in current.get("zone_impacts",[])}
         ends=[parse(z["end"]) for z in ctx["operations"].data.get("weather_zones",[]) if z["id"] in zone_ids]
         ends.extend(parse(e["end"]) for e in ctx["operations"].data.get("events",[]) if e["kind"]=="closure" and e.get("node") in ship["route"] and parse(e["start"])<parse(current["eta"]) and parse(e["end"])>departure)
@@ -271,7 +277,7 @@ def review_options(ctx, ship):
         option["connections"]=connection_warnings(option,ship.get("accepted_plan"))
         if current and option.get("dispatch_action")=="wait":
             option["comparison"]={"baseline":"Current itinerary without waiting, under the same conditions","money_saved_eur":current["cost"]["transport_eur"]-option["cost"]["transport_eur"],"minutes_saved":current["total_minutes"]-option["total_minutes"],"fuel_saved_l":current["cost"]["fuel_l"]-option["cost"]["fuel_l"]}
-            option["baseline_snapshot"]={k:deepcopy(current[k]) for k in ("path","depart_at","eta","total_minutes","cost","revision")}
+            option["baseline_snapshot"]={k:deepcopy(current[k]) for k in ("path","depart_at","eta","total_minutes","cost","revision","components") if k in current}
     if remaining:
         for option in options:option["baseline_snapshot"]=deepcopy(option.get("baseline_snapshot",{}))
         for option in options:
@@ -288,6 +294,36 @@ def review_options(ctx, ship):
     choices=[("Fastest",min(eligible,key=lambda o:o["total_minutes"])),("Lowest cost",min(eligible,key=lambda o:o["cost"]["transport_eur"])),("Balanced",min(eligible,key=lambda o:o["cost"]["transport_eur"]+o["total_minutes"]*50/60))] if eligible else []
     for option in options:option["badges"]=[label for label,choice in choices if option is choice]
     return options
+
+
+class ApprovalReviewUpdated(ValueError):
+    """The new options must be committed before reporting that review is needed."""
+
+
+def approval_paths(ship, option):
+    """Check the selected itinerary, direct baseline and any approved comparison."""
+    from .progress import dispatched
+    previous=ship.get("accepted_plan") if ship.get("approved_at") else None
+    quoted=[option]+([previous] if previous else [])
+    if dispatched(ship) or any(
+        not o.get("path") or o.get("route_id")!="-".join(o["path"])+":normal" for o in quoted
+    ):
+        # Road alternatives, detours and wait plans need their original search.
+        return None
+    paths=[[ship["origin"],ship["destination"]]]
+    for quoted_option in quoted:
+        if quoted_option["path"] not in paths:paths.append(quoted_option["path"])
+    return paths
+
+
+def replan_input(ship, from_now=False):
+    from .progress import dispatched
+    if ship["status"]=="DELIVERED":raise ValueError("Delivery is already confirmed")
+    planned=ship.copy()
+    now=datetime.now(timezone.utc)
+    if (ship.get("hold") or from_now) and not dispatched(ship) and not ship.get("demo_session") and parse(ship["planned_departure"])<now:
+        planned["planned_departure"]=(now+timedelta(minutes=5)).isoformat()
+    return planned
 
 
 class Shipments:
@@ -394,7 +430,7 @@ class Shipments:
         _save(self.data)
         return ship
 
-    def schedule(self, sid, option_index=0, force=False, quote_id=None, decision_reason=None):
+    def schedule(self, sid, option_index=0, force=False, quote_id=None, decision_reason=None, reviewed_options=None, limited=False):
         s = self.data.get(sid)
         if not s:
             return None, "unknown shipment"
@@ -415,20 +451,39 @@ class Shipments:
         if s.get("hold") and not moving and parse(s["planned_departure"])<datetime.now(timezone.utc):
             raise ValueError("The held departure is in the past. Recalculate before releasing the hold.")
         if opt.get("revision", -1) != ctx["operations"].data["revision"]: raise ValueError("Conditions changed. Recalculate the shipment before scheduling.")
-        fresh=review_options(ctx,s)
+        fresh=reviewed_options if reviewed_options is not None else review_options(ctx,s)
+        if reviewed_options is not None:
+            from .capacity import evaluate
+            for reviewed in fresh:
+                if "ldm" in reviewed:
+                    reviewed["capacity"]=evaluate(reviewed,ctx,reviewed["ldm"])
         candidate=next((o for o in fresh if o.get("route_id")==opt.get("route_id")),None)
         if candidate and not candidate.get("capacity",{}).get("feasible",True):raise ValueError("Capacity changed during approval. Recalculate and choose an available option")
         if candidate and moving and not candidate.get("geometry"):raise ValueError("Remaining road geometry is unavailable; a reroute cannot be approved")
         if candidate and candidate.get("avoidance_status") in {"IMPACTED", "NO_CLEAR_DETOUR"}:
             raise ValueError("Weather conditions changed. Hold the shipment and recalculate a clear route.")
+        updated=fresh
+        if limited:
+            by_route={o.get("route_id"):o for o in fresh}
+            updated=[]
+            for old in s["options"]:
+                new=by_route.pop(old.get("route_id"),None)
+                if new is not None:
+                    new["badges"]=old.get("badges",[])
+                    new["label"]=old["label"]
+                    new["intermediate_hub"]=old.get("intermediate_hub")
+                updated.append(new if new is not None else old)
+            updated.extend(by_route.values())
         if candidate is None or change_summary(opt,candidate)["material"]:
-            s["options"]=fresh
-            s["plan_change"]=change_summary(s.get("accepted_plan"),fresh[0])
+            if candidate is None and limited:
+                updated=[o for o in updated if o.get("quote_id")!=opt.get("quote_id")]
+            s["options"]=updated
+            s["plan_change"]=change_summary(s.get("accepted_plan"),candidate or fresh[0])
             _save(self.data)
-            raise ValueError("Live conditions changed during approval. Recalculate and review the updated options; saved plan was retained.")
+            raise ApprovalReviewUpdated("Live conditions changed during approval. Updated options are ready to review. The saved plan is unchanged.")
         # The freshly checked quote is the plan we actually approve and persist.
         approved = candidate
-        approved_index = fresh.index(candidate)
+        approved_index = updated.index(candidate)
         if not approved["risk"]["deadline_ok"] and not force:
             # feasibility warning BEFORE committing
             return s, f"WARNING: selected route misses delivery window (ETA {approved['eta']}). Schedule anyway or pick another route."
@@ -456,7 +511,7 @@ class Shipments:
                     "recorded_at": datetime.now(timezone.utc).isoformat(),
                     "basis": "Previously approved path re-evaluated under the conditions in force at approval",
                 }
-        s["options"] = fresh
+        s["options"] = updated
         from .capacity import reservations
         s["capacity_reservations"]=reservations(approved)
         s.setdefault("approval_history",[]).append({"quote_id":previous_plan.get("quote_id"),"path":previous_plan.get("path"),"eta":previous_plan.get("eta"),"at":s.get("approved_at"),"reason":s.get("approval_reason")})
@@ -498,15 +553,14 @@ class Shipments:
 
     def replan(self, sid, from_now=False):
         s=self.data[sid]
-        from .progress import dispatched
-        if s["status"]=="DELIVERED":raise ValueError("Delivery is already confirmed")
-        if (s.get("hold") or from_now) and not dispatched(s) and not s.get("demo_session") and parse(s["planned_departure"])<datetime.now(timezone.utc):
-            # A resumed shipment cannot use its missed departure. The old
-            # accepted plan remains intact for the manager's comparison.
-            s["planned_departure"]=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()
-        s["options"]=review_options(self.context_for(s),s)
-        from .dispatch import connection_warnings
-        for option in s["options"]: option["connections"]=connection_warnings(option,s.get("accepted_plan"))
+        planned=replan_input(s,from_now)
+        options=review_options(self.context_for(planned),planned)
+        return self.save_replan(sid,planned["planned_departure"],options)
+
+    def save_replan(self,sid,departure,options):
+        s=self.data[sid]
+        s["planned_departure"]=departure
+        s["options"]=options
         s["plan_change"]=change_summary(s.get("accepted_plan"),s["options"][0])
         _save(self.data)
         return s

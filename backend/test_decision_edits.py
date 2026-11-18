@@ -1,4 +1,7 @@
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from uuid import uuid4
 from test_combined import client
 from test_manager_routes import shipment
 
@@ -10,6 +13,49 @@ def initial_decision(client):
     r=client.post("/api/decisions",json=body)
     assert r.status_code==200,r.text
     return s,r.json(),body
+
+
+def test_retried_approval_returns_original_receipt(client,monkeypatch):
+    from app import main
+    s=shipment(client)
+    option=s["options"][0]
+    body={"shipment_id":s["id"],"action":"accept","option":0,"revision":option["revision"],"quote_id":option["quote_id"],
+          "reason":"Reviewed with dispatch","acknowledge_deadline":True,"request_id":str(uuid4())}
+    first=client.post("/api/decisions",json=body)
+    assert first.status_code==200,first.text
+    def must_not_search(*args,**kwargs):
+        raise AssertionError("A repeated approval should return the saved receipt")
+    monkeypatch.setattr(main,"review_options",must_not_search)
+    retry=client.post("/api/decisions",json=body)
+    assert retry.status_code==200,retry.text
+    assert retry.json()["id"]==first.json()["id"]
+    assert sum(d["shipment_id"]==s["id"] for d in client.get("/api/operations").json()["decisions"])==1
+
+
+def test_concurrent_change_can_save_while_approval_checks_route(client,monkeypatch):
+    from app import main
+    s=shipment(client)
+    option=s["options"][0]
+    entered,release=Event(),Event()
+    review=main.review_options
+    def paused_review(*args,**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return review(*args,**kwargs)
+    monkeypatch.setattr(main,"review_options",paused_review)
+    body={"shipment_id":s["id"],"action":"accept","option":0,"revision":option["revision"],
+          "quote_id":option["quote_id"],"reason":"Reviewed with dispatch","acknowledge_deadline":True}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        decision=pool.submit(client.post,"/api/decisions",json=body)
+        try:
+            assert entered.wait(3)
+            event=pool.submit(client.post,"/api/events",json={"kind":"hub_delay","node":"R16",
+                "start":"2026-11-18T08:00:00Z","end":"2026-11-19T08:00:00Z","reason":"New warehouse delay"})
+            assert event.result(timeout=3).status_code==200
+        finally:
+            release.set()
+        assert decision.result(timeout=3).status_code==409
+    assert not client.get(f"/api/shipments/{s['id']}").json().get("approved_at")
 
 
 def test_note_edit_preserves_previous_text_and_does_not_change_route(client):

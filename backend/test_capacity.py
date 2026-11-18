@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 
 from app.capacity import evaluate
 from test_combined import client
@@ -20,10 +21,12 @@ def test_reservations_reduce_capacity_and_own_booking_is_excluded():
 
 
 def test_capacity_rechecked_before_approval_prevents_overbooking(client):
+    departure=datetime.now(timezone.utc).replace(hour=6,minute=0,second=0,microsecond=0)+timedelta(days=7)
+    departure+=timedelta(days=(1-departure.weekday())%7)
     service=client.post("/api/services",json={"origin":"R16","destination":"R21","weekdays":[0,1,2,3,4],"departure_time":"12:00","cutoff_minutes":0}).json()
-    cap=client.post("/api/capacity",json={"kind":"service","service_id":service["id"],"start":"2026-10-20T00:00:00Z","end":"2026-10-22T00:00:00Z","available_ldm":5,"reason":"One shipment slot available"})
+    cap=client.post("/api/capacity",json={"kind":"service","service_id":service["id"],"start":departure.isoformat(),"end":(departure+timedelta(days=7)).isoformat(),"available_ldm":5,"reason":"One shipment slot available"})
     assert cap.status_code==200,cap.text
-    body={"origin":"R16","destination":"R21","planned_departure":"2026-10-20T06:00:00Z","weight_kg":8000}
+    body={"origin":"R16","destination":"R21","planned_departure":departure.isoformat(),"weight_kg":8000}
     first=client.post("/api/shipments",json=body).json()
     second=client.post("/api/shipments",json=body).json()
     def approve(ship):

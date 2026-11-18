@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type maplibregl from "maplibre-gl";
 import { Car, CloudSun, Expand, LocateFixed, RefreshCw } from "lucide-react";
-import { api } from "../api/client";
-import type { MapConditions } from "../api/types";
 import { dt, hm } from "../lib";
 import type { LiveMapProps } from "./LiveMap";
 import { loadGoogleMaps, GOOGLE_MAP_ID } from "./googleMapsApi";
 import { googleMarker, googlePath, googlePosition, googleWeatherSurface } from "./googleWeatherSurface";
 import type { WeatherMapSurface } from "./WeatherMapSurface";
 import { MapWeatherSimulation } from "./MapWeatherSimulation";
-import { routePointForIncident, alternativeColor, alternativeLabelPoint } from "./mapRouteGeometry";
+import { createRouteIncidentMatcher, alternativeColor, alternativeLabelPoint } from "./mapRouteGeometry";
+import { useRouteMapConditions } from "./useRouteMapConditions";
 import { TRUCK_GLYPH } from "./truckGlyph";
 import { RouteWeatherReadout } from "./RouteWeatherReadout";
 import { HubEventSummary } from "./HubEventSummary";
@@ -35,13 +34,12 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   const unusedMapLibre = useRef<maplibregl.Map | null>(null);
   const sdk = useRef<typeof google.maps | null>(null);
   const info = useRef<google.maps.InfoWindow | null>(null);
+  const selectedLine = useRef<google.maps.Polyline | null>(null);
+  const facilities = useRef(new Map<string, {button: HTMLButtonElement; marker: google.maps.marker.AdvancedMarkerElement}>());
   const [surface, setSurface] = useState<WeatherMapSurface | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
-  const [conditionsError, setConditionsError] = useState("");
   const [layout, setLayout] = useState(0);
-  const [data, setData] = useState<MapConditions | null>(null);
-  const [loading, setLoading] = useState(false);
   const [tick, setTick] = useState(0);
   const [weather, setWeather] = useState(true);
   const [traffic, setTraffic] = useState(true);
@@ -52,12 +50,12 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   const byId = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
   const planned = useMemo(() => geometry?.length ? geometry : path.flatMap(id => { const n = byId.get(id); return n ? [[n.lon, n.lat]] : []; }), [geometry, path, byId]);
   const coords = sim?.engaged && sim.activeCoords?.length ? sim.activeCoords : planned;
-  const roadKey = useMemo(() => JSON.stringify(coords), [coords]);
-  const conditionsKey = useMemo(() => JSON.stringify(planned), [planned]);
   const cameraKey = JSON.stringify([planned[0], planned[planned.length - 1]]);
   const hubNoticesKey = JSON.stringify(hubNotices);
-  const dataGeometry = useRef("");
+  const {data, loading, error: conditionsError} = useRouteMapConditions(planned, offset, tick, !demo);
   const forecasts = offset === -1 && routeWeather.length ? routeWeather : data?.weather ?? EMPTY;
+  const facilityContext = useRef({path, alternatives, forecasts});
+  facilityContext.current = {path, alternatives, forecasts};
   const choose = useRef(onSelect); choose.current = onSelect;
   const lastFit = useRef("");
 
@@ -97,19 +95,17 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
   }, [ready, cameraKey, fit, layout]);
   useEffect(() => { map.current?.setMapTypeId(mapType); }, [mapType, ready]);
 
-  useEffect(() => {
-    if (demo) { setData(null); setLoading(false); return; }
-    let alive = true; setLoading(true); setConditionsError("");
-    if (dataGeometry.current !== conditionsKey) { setData(null); dataGeometry.current = conditionsKey; }
-    api.mapConditions(JSON.parse(conditionsKey), new Date(Date.now() + Math.max(0, offset) * 3600000).toISOString())
-      .then(value => { if (alive) setData(value); })
-      .catch(e => { if (alive) setConditionsError(String(e)); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [conditionsKey, offset, tick, demo]);
   useEffect(() => { const timer = window.setInterval(() => { if (!document.hidden && container.current?.offsetParent) setTick(t => t + 1); }, 120000); return () => clearInterval(timer); }, []);
 
-  // Native polylines retain the same road geometries and route selection logic.
+  useEffect(() => {
+    if (!ready || !map.current || !sdk.current) return;
+    const line = new sdk.current.Polyline({map: map.current, strokeColor: "#17765e", strokeWeight: 6, strokeOpacity: 1, zIndex: 6, clickable: false});
+    selectedLine.current = line;
+    return () => { line.setMap(null); selectedLine.current = null; };
+  }, [ready]);
+  useEffect(() => { selectedLine.current?.setPath(googlePath(coords)); }, [ready, coords]);
+
+  // Supporting lines can change independently of the selected road.
   useEffect(() => {
     const maps = sdk.current, native = map.current;
     if (!ready || !maps || !native) return;
@@ -124,7 +120,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
     }
     line(completedGeometry, "#7f8a92", 5, .7, 2);
     (showAlternatives ? alternatives : EMPTY).forEach((option, i) => {
-      if (!option.geometry?.length || JSON.stringify(option.geometry) === roadKey) return;
+      if (!option.geometry?.length || option.geometry === planned) return;
       line(option.geometry, "#ffffff", 13, .9, 2);
       const color = alternativeColor(i);
       const item = line(option.geometry, color, 9, .85, 3);
@@ -140,7 +136,6 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
       }
     });
     comparisonGeometry?.forEach(points => line(points, "#d86135", 5, .85, 4, true));
-    line(coords, "#17765e", 6, 1, 6);
     if (traffic && offset <= 0) trafficSections.forEach(section => {
       const item = line(section.geometry, "#de7043", 7, 1, 7);
       item?.addListener("click", (event: google.maps.MapMouseEvent) => {
@@ -150,9 +145,45 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
     });
     if (sim?.ghostCoords) line(sim.ghostCoords, "#82909c", 4, .75, 5, true);
     return () => { lines.forEach(item => { maps.event.clearInstanceListeners(item); item.setMap(null); }); labels.forEach(marker => { marker.map = null; }); };
-  }, [ready, roadKey, coords, alternatives, showAlternatives, completedGeometry, comparisonGeometry, trafficSections, traffic, offset, sim?.ghostCoords]);
+  }, [ready, planned, alternatives, showAlternatives, completedGeometry, comparisonGeometry, trafficSections, traffic, offset, sim?.ghostCoords]);
 
-  // Facility, forecast and route-only incident markers use Google's native marker API.
+  useEffect(() => {
+    const maps = sdk.current, native = map.current;
+    if (!ready || !hubs || !maps || !native) return;
+    const pins = new Map<string, {button: HTMLButtonElement; marker: google.maps.marker.AdvancedMarkerElement}>();
+    for (const node of nodes) {
+      const title = `${node.name} facility`;
+      const button = document.createElement("button");
+      button.className = "facility-marker"; button.title = title; button.setAttribute("aria-label", title);
+      const marker = googleMarker(maps, native, {lat: node.lat, lng: node.lon}, button, title);
+      button.addEventListener("click", () => {
+        const current = facilityContext.current;
+        const option = current.alternatives.find(o => o.path === current.path);
+        const step = option?.steps.find(s => s.location === node.id);
+        const forecast = current.forecasts.find(w => w.id === node.id || w.name === node.name);
+        info.current?.setContent(information(title, [
+          current.path.includes(node.id) ? "On selected journey" : "Network facility",
+          step ? `${step.type.replace(/_/g, " ")} · ${dt(step.start)}` : "",
+          forecast ? `${forecast.condition ?? forecast.status} · ${forecast.temperature_c ?? "—"}°C` : "",
+        ]));
+        info.current?.open({map: native, anchor: marker, shouldFocus: false});
+      });
+      pins.set(node.id, {button, marker});
+    }
+    facilities.current = pins;
+    return () => { pins.forEach(({marker}) => { marker.map = null; }); pins.clear(); };
+  }, [ready, nodes, hubs]);
+
+  useEffect(() => {
+    const selected = new Set(path);
+    facilities.current.forEach(({button, marker}, id) => {
+      const onRoute = selected.has(id);
+      button.classList.toggle("on-route", onRoute);
+      marker.zIndex = onRoute ? 30 : 20;
+    });
+  }, [ready, nodes, path, hubs]);
+
+  // Refresh forecast and incident markers without rebuilding the facility layer.
   useEffect(() => {
     const maps = sdk.current, native = map.current;
     if (!ready || !maps || !native) return;
@@ -164,29 +195,24 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
       button.addEventListener("click", () => { info.current?.setContent(information(title, lines)); info.current?.open({ map: native, anchor: marker, shouldFocus: false }); });
       markers.push(marker); return marker;
     }
-    if (hubs) nodes.forEach(node => {
-      const selected = path.includes(node.id);
-      const option = alternatives.find(o => o.path.join("-") === path.join("-"));
-      const step = option?.steps.find(s => s.location === node.id);
-      const forecast = forecasts.find(w => w.id === node.id || w.name === node.name);
-      pin([node.lon, node.lat], `facility-marker ${selected ? "on-route" : ""}`, "", `${node.name} facility`,
-        [selected ? "On selected journey" : "Network facility", step ? `${step.type.replace(/_/g, " ")} · ${dt(step.start)}` : "", forecast ? `${forecast.condition ?? forecast.status} · ${forecast.temperature_c ?? "—"}°C` : ""]);
-    });
     if (weather) [...new Map(forecasts.map(w => [w.id, w])).values()].forEach(w => pin([w.lon, w.lat], `weather-marker wx-${w.level ?? "unknown"}`,
       /snow/i.test(w.condition ?? "") ? "❄" : /rain/i.test(w.condition ?? "") ? "☂" : w.condition === "Clear" ? "☀" : "☁",
       `${w.condition ?? w.status} · ${w.temperature_c ?? "—"}°C`, [`${w.source} · ${w.status}`, `Wind ${w.wind_kmh ?? "—"} km/h`, `Forecast for ${dt(w.valid_at)}`, `Estimated weather impact: +${w.delay_minutes ?? 0} min`]));
-    if (traffic && incidents && offset <= 0) {
+    if (traffic && incidents && offset <= 0 && data?.incidents.items.length) {
       const shown: google.maps.Point[] = [];
-      (data?.incidents.items ?? []).forEach(incident => {
-        const point = routePointForIncident(incident, planned); if (!point) return;
+      let count = 0;
+      const match = createRouteIncidentMatcher(planned);
+      for (const incident of [...data.incidents.items].sort((a, b) => b.delay_minutes - a.delay_minutes)) {
+        const point = match(incident); if (!point) continue;
         const pixel = surface?.project([point[0], point[1]]);
-        if (pixel && shown.some(p => Math.hypot(p.x - pixel.x, p.y - pixel.y) < 28)) return;
+        if (pixel && shown.some(p => Math.hypot(p.x - pixel.x, p.y - pixel.y) < 28)) continue;
         if (pixel) shown.push(new maps.Point(pixel.x, pixel.y));
         pin(point, "incident-marker", "!", incident.description, [`${incident.delay_minutes} min reported delay · ${incident.source}`, "Current incident near the selected road. Routing determines its ETA impact."]);
-      });
+        if (++count >= 16) break;
+      }
     }
     return () => markers.forEach(marker => { maps.event.clearInstanceListeners(marker); marker.map = null; });
-  }, [ready, nodes, path, hubs, alternatives, forecasts, weather, traffic, incidents, offset, data, planned, surface]);
+  }, [ready, forecasts, weather, traffic, incidents, offset, data, planned, surface]);
 
   // Manager notices remain visible independently of weather/traffic layer toggles.
   useEffect(() => {
@@ -264,7 +290,7 @@ export function GoogleLiveMap({ nodes, path, geometry, completedGeometry = EMPTY
       <div ref={container} className="google-map-canvas" aria-label="Google Maps journey map" />
       {!ready && !error && <div className="google-map-loading" role="status">Loading Google Maps…</div>}
     </MapWeatherSimulation>
-    <div className="map-legend"><span><i style={{ background: "#17765e" }} />Selected route</span>{showAlternatives && alternatives.map((option,i) => option.geometry?.length && JSON.stringify(option.geometry)!==roadKey ? <button key={option.route_id ?? i} onClick={()=>choose.current?.(i)} aria-label={`View route option ${i+1}`}><i style={{background:alternativeColor(i)}}/>Option {i+1}</button> : null)}<span><i style={{ background: "#de7043" }} />Traffic on route</span>{weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} />Simulated weather</span>}{!!completedGeometry.length && <span>Grey · completed road</span>}</div>
+    <div className="map-legend"><span><i style={{ background: "#17765e" }} />Selected route</span>{showAlternatives && alternatives.map((option,i) => option.geometry?.length && option.geometry!==planned ? <button key={option.route_id ?? i} onClick={()=>choose.current?.(i)} aria-label={`View route option ${i+1}`}><i style={{background:alternativeColor(i)}}/>Option {i+1}</button> : null)}<span><i style={{ background: "#de7043" }} />Traffic on route</span>{weatherZones.length > 0 && <span><i style={{ background: "#d15e7d" }} />Simulated weather</span>}{!!completedGeometry.length && <span>Grey · completed road</span>}</div>
     <HubEventSummary notices={hubNotices}/>
     <RouteWeatherReadout forecasts={forecasts}/>
   </div>;

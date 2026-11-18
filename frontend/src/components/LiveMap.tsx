@@ -3,13 +3,14 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { CloudSun, RefreshCw, Expand, LocateFixed, Car, TriangleAlert, Key, X, ExternalLink } from "lucide-react";
 import { api, BASE } from "../api/client";
-import type { NetNode, RouteOption, MapConditions, LiveWeather, AppSettings, Incident, WeatherZone, WeatherZoneInput } from "../api/types";
+import type { NetNode, RouteOption, LiveWeather, AppSettings, Incident, WeatherZone, WeatherZoneInput } from "../api/types";
 import { dt, hm } from "../lib";
 import type { SimView } from "./JourneySimulator";
 import { MapWeatherSimulation } from "./MapWeatherSimulation";
 import { GoogleLiveMap } from "./GoogleLiveMap";
 import { GOOGLE_MAPS_KEY } from "./googleMapsApi";
-import { routePointForIncident } from "./mapRouteGeometry";
+import { createRouteIncidentMatcher } from "./mapRouteGeometry";
+import { useRouteMapConditions } from "./useRouteMapConditions";
 import { TRUCK_GLYPH } from "./truckGlyph";
 import { RouteWeatherReadout } from "./RouteWeatherReadout";
 import { HubEventSummary } from "./HubEventSummary";
@@ -277,10 +278,8 @@ function OpenStreetMap({
   const baseTileFailures = useRef({ count: 0, since: 0 });
   const [styleVersion, setStyleVersion] = useState(0);
   const [ready, setReady] = useState(false);
-  const [data, setData] = useState<MapConditions | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
   const [tick, setTick] = useState(0);
+  const [error, setError] = useState("");
 
   const recoverBasemap = useCallback(() => {
     const failed = activeBasemap.current;
@@ -340,7 +339,7 @@ function OpenStreetMap({
     [sim?.engaged, sim?.activeCoords, planned]
   );
   const coordKey = useMemo(() => JSON.stringify(coords), [coords]);
-  const conditionsKey = useMemo(() => JSON.stringify(planned), [planned]);
+  const {data, loading, error: conditionsError} = useRouteMapConditions(planned, offset, tick, !demo);
 
   const fit = useCallback(() => {
     const m = map.current;
@@ -355,32 +354,13 @@ function OpenStreetMap({
 
   // Fit bounds when route changes or map becomes ready, but never during simulation frame updates
   const lastFitted = useRef("");
-  const pathKey = useMemo(() => `${path.join("-")}:${conditionsKey}`, [path, conditionsKey]);
+  const pathKey = JSON.stringify([planned[0], planned[planned.length - 1]]);
   useEffect(() => {
     if (!ready || !map.current) return;
     if (lastFitted.current === pathKey) return;
     lastFitted.current = pathKey;
     fit();
   }, [ready, pathKey, fit]);
-
-  // Fetch map conditions (weather & incidents)
-  useEffect(() => {
-    if (demo) {
-      setData(null);
-      setLoading(false);
-      return;
-    }
-    let alive = true;
-    setLoading(true);
-    setError("");
-    setData(null);
-    const at = new Date(Date.now() + Math.max(0, offset) * 3600000).toISOString();
-    api.mapConditions(JSON.parse(conditionsKey), at)
-      .then((r) => { if (alive) setData(r); })
-      .catch((e) => { if (alive) setError(String(e)); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [conditionsKey, offset, tick, demo]);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 120000);
@@ -743,9 +723,10 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
     if (!m || !ready || loadedMap.current !== m) return;
     incidentMarkers.current.forEach((x) => x.remove());
     incidentMarkers.current = [];
-    if (traffic && incidents && offset <= 0) {
+    if (traffic && incidents && offset <= 0 && data?.incidents.items.length) {
+      const match = createRouteIncidentMatcher(planned);
       incidentMarkers.current = (data?.incidents.items ?? []).flatMap((i) => {
-        const c = routePointForIncident(i, planned);
+        const c = match(i);
         if (!c) return [];
         const el = document.createElement("button");
         el.className = "incident-marker";
@@ -764,7 +745,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
     if (m.getLayer("traffic-sections-line")) {
       m.setLayoutProperty("traffic-sections-line", "visibility", traffic && offset <= 0 ? "visible" : "none");
     }
-  }, [ready, styleVersion, data, traffic, incidents, offset, conditionsKey]);
+  }, [ready, styleVersion, data, traffic, incidents, offset, planned]);
 
   // The map reads the replay clock directly, independently of React's readouts.
   const pausedTruck = sim?.running ? null : sim?.truck;
@@ -958,6 +939,7 @@ Weather impact rule: +${w.delay_minutes ?? 0}m (estimate)`))
       {data?.incidents.status === "ERROR" && <div className="map-note">Traffic incidents could not be refreshed. Coverage may be incomplete.</div>}
       {fallback && webglAvailable && <div className="map-note">Road-map tiles are temporarily unavailable. <button className="linkbtn" onClick={() => { failedBasemaps.current.clear(); baseTileFailures.current = { count: 0, since: 0 }; setBasemap("osm"); setError(""); setFallback(false); }}>Retry road map</button></div>}
       {error && !(fallback && webglAvailable) && <div role="alert" className="map-note">{error}</div>}
+      {conditionsError && <div role="status" className="map-note">Weather and traffic could not refresh: {conditionsError}</div>}
       <HubEventSummary notices={hubNotices}/>
       <RouteWeatherReadout forecasts={forecasts}/>
       {showKeyModal && (

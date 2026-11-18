@@ -24,33 +24,67 @@ export function alternativeLabelPoint(road: number[][], selected: number[][]): n
   return best;
 }
 
-export function routePointForIncident(incident: Incident, route: number[][]): [number, number] | null {
-  if (route.length < 2) return null;
-  const incidentPoints: [number, number][] = [];
-  const collect = (value: unknown) => {
-    if (!Array.isArray(value)) return;
-    if (value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
-      incidentPoints.push([value[0], value[1]]);
-      return;
+type LngLat = [number, number];
+const KM_PER_DEGREE = 111.32;
+const INCIDENT_RADIUS_KM = 1;
+const gridIndex = (degrees: number) => Math.floor(degrees / 0.02);
+
+/** Index a road once, then check only nearby segments for each incident coordinate. */
+export function createRouteIncidentMatcher(route: number[][]) {
+  const grid = new Map<string, number[]>();
+  const longSegments: number[] = [];
+  for (let i = 1; i < route.length; i++) {
+    const a = route[i - 1], b = route[i];
+    const west = gridIndex(Math.min(a[0], b[0])), east = gridIndex(Math.max(a[0], b[0]));
+    const south = gridIndex(Math.min(a[1], b[1])), north = gridIndex(Math.max(a[1], b[1]));
+    // An approximate road can contain a very long straight leg.
+    if ((east - west + 1) * (north - south + 1) > 16) {
+      longSegments.push(i);
+      continue;
     }
-    value.forEach(collect);
-  };
-  collect(incident.geometry.coordinates);
-  let bestDistance = Infinity;
-  let bestPoint: [number, number] | null = null;
-  for (const [lon, lat] of incidentPoints) {
-    const scaleX = 111.32 * Math.cos((lat * Math.PI) / 180);
-    for (let i = 1; i < route.length; i++) {
-      const a = route[i - 1], b = route[i];
-      const dx = (b[0] - a[0]) * scaleX, dy = (b[1] - a[1]) * 111.32;
-      const px = (lon - a[0]) * scaleX, py = (lat - a[1]) * 111.32;
-      const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)));
-      const x = a[0] + (b[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * t;
-      const distance = Math.hypot((lon - x) * scaleX, (lat - y) * 111.32);
-      if (distance < bestDistance) { bestDistance = distance; bestPoint = [x, y]; }
+    for (let x = west; x <= east; x++) {
+      for (let y = south; y <= north; y++) {
+        const key = `${x}:${y}`;
+        const cell = grid.get(key);
+        if (cell) cell.push(i);
+        else grid.set(key, [i]);
+      }
     }
   }
-  // TomTom queries a corridor around the road; only display incidents within 1 km of this route.
-  return bestDistance <= 1 ? bestPoint : null;
+
+  return (incident: Incident): LngLat | null => {
+    let bestDistance = Infinity;
+    let bestPoint: LngLat | null = null;
+    function visit(value: unknown) {
+      if (!Array.isArray(value)) return;
+      const [lon, lat] = value;
+      if (typeof lon !== "number" || typeof lat !== "number") {
+        value.forEach(visit);
+        return;
+      }
+      if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lat) > 85) return;
+      const scaleX = KM_PER_DEGREE * Math.cos((lat * Math.PI) / 180);
+      const lonRadius = INCIDENT_RADIUS_KM / scaleX, latRadius = INCIDENT_RADIUS_KM / KM_PER_DEGREE;
+      const candidates = new Set(longSegments);
+      for (let x = gridIndex(lon - lonRadius); x <= gridIndex(lon + lonRadius); x++) {
+        for (let y = gridIndex(lat - latRadius); y <= gridIndex(lat + latRadius); y++) {
+          grid.get(`${x}:${y}`)?.forEach(index => candidates.add(index));
+        }
+      }
+      for (const index of candidates) {
+        const a = route[index - 1], b = route[index];
+        const dx = (b[0] - a[0]) * scaleX, dy = (b[1] - a[1]) * KM_PER_DEGREE;
+        const px = (lon - a[0]) * scaleX, py = (lat - a[1]) * KM_PER_DEGREE;
+        const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)));
+        const distance = (px - t * dx) ** 2 + (py - t * dy) ** 2;
+        if (distance <= INCIDENT_RADIUS_KM ** 2 && distance < bestDistance) {
+          bestDistance = distance;
+          bestPoint = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        }
+      }
+    }
+    visit(incident.geometry.coordinates);
+    return bestPoint;
+  };
 }
 
