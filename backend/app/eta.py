@@ -46,10 +46,6 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
         arrival=cur
         h=transfer.get(na.get("relation"),{}).get("avg_transfer_minutes",120)
         if i==0 and skip_origin_handling:h=0
-        if driver and cur+timedelta(minutes=h)>driver.daily_rest_end+timedelta(hours=13):
-            end=driver.pause(cur,660,"driver_rest")
-            add("driver_rest",a,cur,end,"Regular daily rest before the next handling period","EU 561/2006 · planned single-driver rest")
-            comp["driver_rest"]+=660;cur=end
         if h:add("handling",a,cur,cur+timedelta(minutes=h),"Loading & handling" if i==0 else "Intermediate hub transfer","Historical proxy / 120-minute baseline")
         comp["transfer"]+=h; cur+=timedelta(minutes=h)
         release=hub_release(arrival,cur,intermediate=i>0) if company_hold else cur
@@ -145,11 +141,12 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
             add("hub_delay",a,cur,end,"Departure facility closed: "+"; ".join(e["reason"] for e in closures),"MANAGER CLOSURE")
             comp["hub_delay"]+=round((end-cur).total_seconds()/60); cur=end
         if driver:
+            driver.new_leg()  # driver change at this hub: only this hub-to-hub leg counts
             for _ in range(10):
                 required=driver.required_pause(cur)
                 if not required:break
                 duration,kind,reason=required;end=driver.pause(cur,duration,kind)
-                add(kind,a,cur,end,reason,"EU 561/2006 · planned single-driver rest")
+                add(kind,a,cur,end,reason,"EU 561/2006 · driving break within this leg")
                 comp[kind]+=duration;cur=end
         def fits_weekend(start):
             return leg_start(start, lambda t: preview_drive(t, drive + road.get("traffic_minutes", 0), wait_from=cur)["arrival"]) == start
@@ -239,8 +236,8 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
                 comp["hub_delay"]+=ev["minutes"]; cur=end
     return {"origin":origin,"destination":dest,"path":path,"depart_at":depart_utc.isoformat(),"eta":cur.isoformat(),
             "planning_rules":planning_rules,
-            "driver_plan":{"assumption":"One fully rested driver at journey start; no earlier driving history. Loading is not a break.","break_minutes":driver.break_minutes,"rest_minutes":driver.rest_minutes,"requires_review":["Confirm tachograph history, other work and appropriate rest locations before dispatch.","Confirm all federal states crossed; regional holiday scope is selected manually."]} if driver else None,
+            "driver_plan":{"assumption":"A rested driver takes over at every hub, so only the driving time between two hubs counts: a 45-minute break after at most 4½ hours. No 11-hour daily rest is planned because several drivers are available. Loading is not a break.","break_minutes":driver.break_minutes,"rest_minutes":driver.rest_minutes,"requires_review":["Confirm a relief driver is available at each hub and suitable break locations before dispatch.","Confirm all federal states crossed; regional holiday scope is selected manually."]} if driver else None,
             "zone_impacts":list({z["id"]:z for z in zone_impacts}.values()),"weather_detours":weather_detours,"avoidance_status":"CLEAR" if avoid_zones else "IMPACTED" if zone_impacts else "NO_ZONE", "detour_km":round(detour_km,1),
             "scheduled_services":services,"total_minutes":round((cur-depart_utc).total_seconds()/60),"components":comp,"steps":rows,
             "geometry":geometry if all_geometry else None,"road_legs":leg_data,"weather_alerts":list({r["id"]:r for r in alerts}.values()),"live_weather":forecasts,"traffic_sections":traffic_sections,"traffic_status":"LIVE_OR_PREDICTED" if any("TomTom" in l["source"] for l in leg_data) else ("SIMULATED" if traffic_sections or any(l.get("traffic_sections") for l in [road]) else ("NOT_CONFIGURED" if not getattr(getattr(providers,"tomtom",None),"key",None) else "UNAVAILABLE")),
-            "data_sources":{"transport":" + ".join(sorted({l["source"] for l in leg_data})),"transfer":"disposition.csv derived proxy","weather":"Open-Meteo forecasts + manual samples; impact is a prototype rule","weekend":"Full Sunday business hold" if company_hold else "StVO §30 · Sunday 00:00–22:00 Europe/Berlin","driver":"EU 561/2006 · fully rested single-driver planning" if driver else "Legacy estimate; recalculate for driver rules","traffic":providers.traffic.status()}}
+            "data_sources":{"transport":" + ".join(sorted({l["source"] for l in leg_data})),"transfer":"disposition.csv derived proxy","weather":"Open-Meteo forecasts + manual samples; impact is a prototype rule","weekend":"Full Sunday business hold" if company_hold else "StVO §30 · Sunday 00:00–22:00 Europe/Berlin","driver":"EU 561/2006 · driver change at every hub; 45 min break per 4½ h within a leg" if driver else "Legacy estimate; recalculate for driver rules","traffic":providers.traffic.status()}}

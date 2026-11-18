@@ -28,20 +28,20 @@ Official references are linked below.
 - Public holidays are distinguished from the holidays enumerated by StVO §30(4).
   For example, Epiphany is a public holiday in BW but is not itself a StVO holiday
   truck-ban date. State-specific Corpus Christi/Reformation/All Saints bans differ.
-- One clock spans all legs: at most 4.5 hours driving before a 45-minute break,
-  a conservative 9-hour daily driving ceiling, and regular 11-hour daily rest.
-  No 10-hour extension, reduced daily rest, or split-break concession is assumed.
-- Calendar midnight and intermediate handling do not reset the driving clock.
-  Daily/weekly rest and 56-hour weekly / 90-hour fortnightly driving ceilings are
-  represented. Regular weekly rest is 45 hours; available parked restriction
-  time can contain prospectively assigned off-duty rest, without adding it twice.
+- Relay driving: a rested driver takes over at every hub, so the driving clock
+  restarts at each hub and only the driving time of one hub-to-hub leg counts.
+  Within a leg: at most 4.5 hours driving before a 45-minute break.
+- No 11-hour daily rest and no weekly rest are planned, because several drivers
+  are available. Calendar midnight does not reset the break clock. A parked wait
+  of 45 minutes or more (for example a ban or weekend hold) counts as the break,
+  without adding it twice.
 - Schedule eligibility uses the selected weekend policy. The planner rejects a
   scheduled departure when its updated route cannot clear the weekend window.
 
 ## Boundaries that must remain visible
 
 This is a prospective route-time model, not a tachograph or legal-compliance
-certificate. It starts with one fully rested driver and zero earlier driving.
+certificate. It assumes a rested relief driver is available at every hub.
 In-transit replanning does not import an actual driver's tachograph balances.
 Known handling is not credited as a driving break. General working-time breaks,
 night-work rules and averaged working-time limits require a duty-roster model;

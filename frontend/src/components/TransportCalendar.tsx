@@ -53,10 +53,9 @@ export function TransportCalendar({departure, rules, onRulesChange, onSelectDate
           <ul className="calendar-holidays">{doc.days.filter(d=>d.holiday).map(d=><li key={d.date}><b>{d.date.slice(-2)} · {d.holiday}</b><span>{d.truck_ban?"Truck ban 00:00–22:00":"No additional StVO §30 truck ban"}</span></li>)}</ul>
         </>}
       </div><aside className="calendar-driver-rules">
-        <h3><Coffee size={17}/>Driver planning</h3><p><b>45 min break</b><span>After at most 4½ hours of driving.</span></p><p><b>9 hours driving</b><span>Conservative daily limit; no 10-hour extensions assumed.</span></p><p><b><Moon size={15}/>11 hours daily rest</b><span>Regular rest, carried across hub connections.</span></p>
-        {option?.driver_plan&&<p className="calendar-assumption">{option.driver_plan.assumption} Planned rest during parked waiting must be confirmed.</p>}
-        {!option&&<p className="calendar-assumption">Assumes one fully rested driver. Loading is work, not a driving break. Duty-roster and working-time checks require manager review.</p>}
-        <p><b>Weekly limits</b><span>56h per week · 90h per fortnight. Regular weekly rest: 45h outside the vehicle.</span></p>
+        <h3><Coffee size={17}/>Driver planning</h3><p><b>45 min break</b><span>After at most 4½ hours of driving, within one hub-to-hub leg.</span></p><p><b><Moon size={15}/>Driver change at every hub</b><span>A rested driver takes over, so the break clock restarts at each hub. No 11-hour daily rest is planned because several drivers are available.</span></p>
+        {option?.driver_plan&&<p className="calendar-assumption">{option.driver_plan.assumption} A parked wait of 45 min or more counts as the break.</p>}
+        {!option&&<p className="calendar-assumption">Only driving time between two hubs counts. Loading is work, not a driving break. Relief-driver availability requires manager review.</p>}
         <p className="calendar-scope">{doc?.scope??"Calendar uses the selected German federal state."}</p>
         {doc?.days.some(d=>d.summer_route_review)&&<p className="calendar-review">July/August Saturdays: specified roads have additional 07:00–20:00 restrictions. Review the road before dispatch.</p>}
       </aside></div>

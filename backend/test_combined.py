@@ -126,9 +126,11 @@ def test_traffic_recompute_and_manager_decision(client):
     refreshed=client.post(f"/api/shipments/{sid}/replan").json()
     new_direct=next(o for o in refreshed["options"] if len(o["path"])==2)
     assert new_direct["components"]["traffic"]-old_direct["components"]["traffic"]==180
-    # The delay also takes this driver past the daily driving limit.
-    assert new_direct["components"]["driver_rest"]-old_direct["components"]["driver_rest"]==660
-    assert new_direct["total_minutes"]-old_direct["total_minutes"]==180+660
+    # Relay drivers: extra traffic can add a 45-min driving break, but never an 11-hour daily rest.
+    assert new_direct["components"]["driver_rest"]==0
+    assert new_direct["components"]["driver_break"]%45==0
+    added_breaks=new_direct["components"]["driver_break"]-old_direct["components"]["driver_break"]
+    assert new_direct["total_minutes"]-old_direct["total_minutes"]==180+added_breaks
     option=len(refreshed["options"])-1
     decision={"shipment_id":sid,"action":"accept","option":option,"revision":refreshed["options"][option]["revision"],"quote_id":refreshed["options"][option]["quote_id"],"reason":"Reviewed route impact"}
     assert client.post("/api/decisions",json={**decision,"revision":-1}).status_code==409
