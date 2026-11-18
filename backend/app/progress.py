@@ -28,6 +28,15 @@ def snap(geometry, point):
     return best
 
 
+def plan_progress(plan, at):
+    """Share of the plan's driving completed at `at` (0-1), from its drive steps."""
+    drives=[(parse(st["start"]),parse(st["end"])) for st in plan.get("steps",[]) if st.get("type")=="drive"]
+    total=sum((e-b).total_seconds() for b,e in drives)
+    if total<=0:return 0.0
+    done=sum(max(0,(min(e,at)-b).total_seconds()) for b,e in drives if at>b)
+    return max(0.0,min(1.0,done/total))
+
+
 def position_report(ship, network, lat=None, lon=None, source="DRIVER REPORTED", reported_at=None, progress_percent=None, movement_state="MOVING", at=None):
     at=at or datetime.now(timezone.utc)
     if not ship.get("approved_at"):raise ValueError("A manager must approve a route before vehicle updates")
@@ -39,7 +48,14 @@ def position_report(ship, network, lat=None, lon=None, source="DRIVER REPORTED",
     previous=ship.get("vehicle_position")
     if previous and reported<=parse(previous["reported_at"]):raise ValueError("A newer vehicle report already exists; refresh before reporting")
     approved=ship.get("accepted_plan") or {};geometry=approved.get("geometry")
-    if progress_percent is not None:
+    if source=="PLAN ESTIMATE":
+        # No fresh driver report: place the truck where the approved plan's driving
+        # schedule says it should be now. Labelled as an estimate, never as GPS.
+        if not geometry:raise ValueError("No approved road geometry to estimate the position from")
+        total=_route_length(geometry);km=total*plan_progress(approved,reported)
+        if previous and previous.get("base_quote_id")==approved.get("quote_id"):km=max(km,previous.get("offset_km",0))
+        lon,lat=_point_at(geometry,min(km,total*0.999))
+    elif progress_percent is not None:
         if not 0<=progress_percent<=100:raise ValueError("Simulation progress must be between 0 and 100")
         if not geometry:raise ValueError("No approved road geometry to simulate")
         lon,lat=_point_at(geometry,_route_length(geometry)*progress_percent/100)

@@ -84,15 +84,15 @@ def _load():
             baseline=json.load(fh)
     except Exception:
         pass
-    return persistence.load("shipments.json",baseline,force=True) if persistence.configured() else baseline
+    return persistence.load_ships(baseline) if persistence.configured() else baseline
 
 
 def _save(d):
-    if persistence.save("shipments.json",d):return
+    if persistence.save_ships(d):return
     os.makedirs(STORE_DIR, exist_ok=True)
     temporary = STORE + ".tmp"
     with open(temporary, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, indent=2, default=str)
+        json.dump(d, fh, separators=(",", ":"), default=str)  # compact: indenting 18 MB took seconds
     os.replace(temporary, STORE)
 
 
