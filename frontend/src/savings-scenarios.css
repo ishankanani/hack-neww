@@ -1,0 +1,32 @@
+.csv-savings { display: grid; gap: 16px; }
+.csv-savings-controls { display: grid; gap: 18px; padding: 22px; }
+.csv-savings-controls h2, .csv-savings-case h3 { margin: 0; }
+.csv-savings-controls p { margin: 8px 0 0; color: var(--muted); line-height: 1.5; }
+.csv-savings-fields, .csv-savings-grid { display: grid; gap: 14px; }
+.csv-savings-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.csv-savings-fields label { display: grid; gap: 7px; font-size: 13px; font-weight: 650; }
+.csv-savings-fields select { padding: 10px 12px; min-width: 0; }
+.csv-savings-source { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; color: var(--muted); font-size: 13px; }
+.csv-savings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.csv-savings-case { overflow: hidden; }
+.csv-savings-case header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 18px 20px; }
+.csv-savings-case header small { display: block; margin-top: 6px; color: var(--muted); }
+.csv-savings-delta { color: #216448; background: #e4f4eb; padding: 5px 9px; border-radius: 6px; font-weight: 700; font-size: 13px; }
+.csv-savings-delta.is-extra { color: #8a5621; background: #fff3dc; }
+.csv-savings-delta.is-flat { color: #4a625b; background: #edf2ef; }
+.csv-savings-case table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.csv-savings-case th, .csv-savings-case td { border-top: 1px solid var(--line); padding: 9px 12px; text-align: right; }
+.csv-savings-case th:first-child { padding-left: 20px; text-align: left; }
+.csv-savings-case tr > :last-child { padding-right: 20px; }
+.csv-savings-case thead, .csv-savings-case footer { background: #f1f6f3; }
+.csv-savings-case tbody th { font-weight: 500; }
+.csv-savings-case footer { padding: 11px 20px; font-size: 13px; }
+.csv-savings-case footer small { display: block; margin-top: 5px; color: var(--muted); }
+.csv-savings-method p { color: var(--muted); line-height: 1.6; }
+@media (max-width: 830px) { .csv-savings-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  .csv-savings-fields { grid-template-columns: 1fr; }
+  .csv-savings-case th, .csv-savings-case td { padding: 8px 6px; font-size: 12px; }
+  .csv-savings-case th:first-child { padding-left: 12px; }
+  .csv-savings-case tr > :last-child { padding-right: 12px; }
+}

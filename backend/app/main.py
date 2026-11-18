@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, AwareDatetime, model_validator
 from typing import Literal
@@ -32,6 +32,7 @@ from .restrictions import drive_with_restrictions
 from .risk import assess
 from .shipments import Shipments, plan as plan_options, savings_vs_baseline, shipment_visits_hub_during, shipment_traffic_exposure_minutes
 from . import savings as savings_engine
+from .savings_scenarios import SavingsScenarios
 from .dispatch import attention, action_comparison, approvable
 from .simulate import reroute as simulate_reroute
 from .map_tiles import router as map_tiles_router
@@ -70,6 +71,7 @@ async def lifespan(app: FastAPI):
         if e["from"] == S["network"]["hub_id"]:
             rel[e["relation"]] = {"km": e["km"], "cost_line": e["cost_eur"], "cost_special": e["cost_special_eur"]}
     S["history"] = an.relation_history(DATA_DIR, rel)
+    S["savings_scenarios"] = SavingsScenarios(DATA_DIR)
     S["disruptions"] = an.disruptions(DATA_DIR)
     S["providers"] = Providers(S["holidays"])
     S["operations"] = Operations()
@@ -89,14 +91,12 @@ app = FastAPI(title="DACHSER Live Transit Planner", version="3.0.0", lifespan=li
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(map_tiles_router)
 
-STATELESS_PATHS=("/api/map-tiles/","/api/health")
+STATELESS_PATHS=("/api/map-tiles/","/api/health","/api/savings/scenarios")
 
 
 @app.middleware("http")
 async def fresh_api_responses(request,call_next):
-    # Map tiles and health checks never read journey state. Refreshing it for them
-    # would cost a database connection and the global lock per tile, and a
-    # storage outage would blank the map and fail health checks.
+    # These endpoints do not read saved journeys or mutable operations data.
     stateless=request.url.path.startswith(STATELESS_PATHS)
     if persistence.configured() and not stateless and (request.method=="GET" or request.url.path=="/api/route"):
         from starlette.concurrency import run_in_threadpool
@@ -406,6 +406,18 @@ def set_status(sid: str, status: str):
 def savings(scope: Literal["estimated","demo"] = "estimated"):
     names = {nid: node["name"] for nid, node in S["network"]["nodes"].items()}
     return savings_engine.summary(S["ships"].list(), names, scope)
+
+
+@app.get("/api/savings/scenarios")
+def savings_scenarios(
+    lane: str = "R01",
+    reserve: int = Query(default=2, ge=0, le=4),
+    objective: Literal["match_dispatch", "clear_demand"] = "match_dispatch",
+):
+    catalog = S["savings_scenarios"]
+    if lane not in catalog.lanes:
+        raise HTTPException(404, "Unknown lane")
+    return catalog.compare(lane, reserve, objective)
 
 
 @app.post("/api/savings/recalculate")

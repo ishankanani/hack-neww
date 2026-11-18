@@ -41,6 +41,8 @@ export const api = {
   audit: () => req<{ events: AuditEvent[] }>("/audit"),
   dashboard: () => req<Dashboard>("/dashboard"),
   savings: (scope:"estimated"|"demo"="estimated") => req<SavingsResp>(`/savings?scope=${scope}`),
+  savingsScenarios: (lane: string, reserve: number, objective: import("./types").SavingsScenarioObjective) =>
+    req<import("./types").SavingsScenarios>(`/savings/scenarios?${new URLSearchParams({lane, reserve: String(reserve), objective})}`),
   recalculateSavings: () => req<SavingsResp>("/savings/recalculate", { method: "POST" }),
   simulateReroute: (body: { lat: number; lon: number; destination: string; via?: string; depart_at?: string; truck?: TruckProfile; transfer_minutes?: number; avoid_weather?: boolean; avoid_points?: {lat:number;lon:number;radius_km:number}[] }) =>
     req<RerouteResp>("/simulate/reroute", { method: "POST", body: JSON.stringify(body) }),

@@ -72,6 +72,41 @@ export interface SavingsTotals {
   time_value_eur: number; disruption_eur: number; exposure_avoided_eur: number;
   economic_benefit_eur: number; fuel_eur: number;
 }
+export type SavingsScenarioObjective = "match_dispatch" | "clear_demand";
+export type SavingsScenarioKind = "efficient" | "special_trips" | "freight_backlog" | "surplus_trailers";
+export interface ScenarioDispatch {
+  regular: number;
+  special: number;
+  dispatched_ldm: number;
+  deferred_ldm: number;
+  cost_eur: number;
+}
+export interface SavingsScenario {
+  kind: SavingsScenarioKind;
+  date: string;
+  demand_ldm: number;
+  target_dispatch_ldm: number;
+  capacity_used_ldm: number;
+  historical_utilisation_pct: number;
+  recorded_surplus: number;
+  historical: ScenarioDispatch;
+  simulation: ScenarioDispatch;
+  difference_eur: number;
+  additional_dispatch_ldm: number;
+}
+export interface SavingsScenarios {
+  lane: string;
+  lanes: {id: string; name: string}[];
+  reserve: number;
+  objective: SavingsScenarioObjective;
+  rated_capacity_ldm: number;
+  target_capacity_ldm: number;
+  regular_rate_eur: number;
+  special_rate_eur: number;
+  rows_scanned: number;
+  rows_excluded: number;
+  scenarios: SavingsScenario[];
+}
 export interface DisruptionSavings {
   minutes_avoided: number; cost_delta_eur: number; fuel_delta_l: number;
   deadline_rescued: boolean; exposure_avoided_eur: number;

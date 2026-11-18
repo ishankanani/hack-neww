@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useState } from "react";
 import { PiggyBank, Fuel, Clock, ShieldCheck, RefreshCw, Download, Loader2 } from "lucide-react";
 import { api } from "../api/client";
-import type { SavingsResp, Performance } from "../api/types";
+import type { SavingsResp, Performance, SavingsScenarios, SavingsScenarioObjective } from "../api/types";
+import { SavingsScenarioPanel, scenarioLabels } from "../components/SavingsScenarioPanel";
 import { eur, hm, dt } from "../lib";
 
-type Mode = "estimated" | "actual" | "demo";
+type Mode = "csv" | "estimated" | "actual" | "demo";
 const modes: {id: Mode; label: string}[] = [
+  {id: "csv", label: "CSV scenarios"},
   {id: "estimated", label: "Approved estimates"},
   {id: "actual", label: "Actual outcomes"},
   {id: "demo", label: "Demo scenarios"},
@@ -19,7 +21,11 @@ function csvCell(value: unknown) {
 }
 
 export function Savings() {
-  const [mode, setMode] = useState<Mode>("estimated");
+  const [mode, setMode] = useState<Mode>("csv");
+  const [lane, setLane] = useState("R01");
+  const [reserve, setReserve] = useState(2);
+  const [objective, setObjective] = useState<SavingsScenarioObjective>("match_dispatch");
+  const [csvScenarios, setCsvScenarios] = useState<SavingsScenarios | null>(null);
   const [s, setS] = useState<SavingsResp | null>(null);
   const [actual, setActual] = useState<Performance | null>(null);
   const [error, setError] = useState("");
@@ -32,14 +38,17 @@ export function Savings() {
   useEffect(() => {
     let active = true;
     setLoading(true); setError(""); setExpanded(null);
-    Promise.all([api.savings(mode === "demo" ? "demo" : "estimated"), api.performance()])
-      .then(([plans, outcomes]) => {
-        if (active) { setS(plans); setActual(outcomes); setAsOf(new Date().toISOString()); }
-      })
+    const request = mode === "csv"
+      ? api.savingsScenarios(lane, reserve, objective).then(data => { if (active) setCsvScenarios(data); })
+      : mode === "actual"
+        ? api.performance().then(data => { if (active) setActual(data); })
+        : api.savings(mode).then(data => { if (active) setS(data); });
+    request
+      .then(() => { if (active) setAsOf(new Date().toISOString()); })
       .catch(e => { if (active) setError(String(e)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [mode, refresh]);
+  }, [mode, refresh, lane, reserve, objective]);
 
   async function rebuild() {
     setBusy(true); setError("");
@@ -50,8 +59,21 @@ export function Savings() {
   const outcomes = actual?.outcomes ?? [];
   const total = s?.total;
   const demo = mode === "demo";
+  const currentScenarios = csvScenarios?.lane === lane && csvScenarios.reserve === reserve && csvScenarios.objective === objective
+    ? csvScenarios
+    : null;
   function exportReport() {
-    const records: unknown[][] = mode === "actual" ? [
+    const records: unknown[][] = mode === "csv" && currentScenarios ? [
+      ["Evidence type", "Scenario", "Source date", "Lane", "Demand LDM", "Dispatch goal", "Target dispatch LDM", "Assumed reserve", "Modelled capacity LDM per trailer", "Regular tariff EUR", "Special tariff EUR", "Recorded regular trailers", "Recorded special trips", "Recorded dispatch LDM", "Recorded deferred LDM", "Recorded plan cost estimate EUR", "Simulated regular trailers", "Simulated special trips", "Simulated dispatch LDM", "Simulated deferred LDM", "Simulated cost EUR", "Same-day cost saving EUR", "Additional same-day dispatch LDM", "Source"],
+      ...currentScenarios.scenarios.map(row => [
+        "SIMULATION", scenarioLabels[row.kind], row.date, currentScenarios.lane, row.demand_ldm,
+        currentScenarios.objective, row.target_dispatch_ldm, currentScenarios.reserve, row.capacity_used_ldm,
+        currentScenarios.regular_rate_eur, currentScenarios.special_rate_eur,
+        row.historical.regular, row.historical.special, row.historical.dispatched_ldm, row.historical.deferred_ldm, row.historical.cost_eur,
+        row.simulation.regular, row.simulation.special, row.simulation.dispatched_ldm, row.simulation.deferred_ldm, row.simulation.cost_eur,
+        row.difference_eur, row.additional_dispatch_ldm, "disposition.csv + relationen.csv; same-day dispatch costs only",
+      ]),
+    ] : mode === "actual" ? [
       ["Evidence type", "Shipment", "Route", "Approved quote", "Approved ETA", "Reported arrival", "Arrival difference min", "Approved cost EUR", "Reported cost EUR", "Cost difference EUR", "On time", "Source", "Report as of"],
       ...outcomes.map(r => ["USER-REPORTED ACTUAL", r.id, r.route.join(" -> "), r.quote_id, r.approved_eta, r.actual_arrival, r.arrival_error_minutes, r.approved_cost_eur, r.actual_cost_eur, r.cost_error_eur, r.on_time == null ? "Unknown" : r.on_time ? "Yes" : "No", r.source, asOf]),
     ] : [
@@ -69,10 +91,10 @@ export function Savings() {
       <div><h1>Savings</h1></div>
       <div className="evidence-actions">
         <button className="btn btn--ghost" disabled={loading || busy} onClick={() => setRefresh(v => v+1)} aria-label="Refresh decision evidence"><RefreshCw size={15}/></button>
-        <button className="btn" disabled={loading || busy || !!error || (mode === "actual" ? !outcomes.length : !rows.length)} onClick={exportReport}><Download size={15}/> Export evidence</button>
+        <button className="btn" disabled={loading || busy || !!error || (mode === "csv" ? !currentScenarios?.scenarios.length : mode === "actual" ? !outcomes.length : !rows.length)} onClick={exportReport}><Download size={15}/> {mode === "csv" ? "Export scenarios" : "Export evidence"}</button>
       </div>
     </div>
-    <details className="card savings-explainer" open>
+    {mode !== "csv" && <details className="card savings-explainer" open>
       <summary><b>How these numbers are calculated</b></summary>
       <ol>
         <li><b>What is compared.</b> Each manager-approved shipment is compared with the <b>direct road option</b> calculated in the same planning run, so both use the same departure time, conditions and load.</li>
@@ -85,13 +107,13 @@ export function Savings() {
         <li><b>Actual results</b> appear only from recorded deliveries matched to an approved plan; totals need at least 5 such records.</li>
       </ol>
       <p className="fineprint">All figures are estimates from the tool's own calculations. They are not invoiced or realised savings.</p>
-    </details>
+    </details>}
     <div className="evidence-tabs" role="tablist" aria-label="Evidence source">
       {modes.map(m => <button key={m.id} id={`tab-${m.id}`} role="tab" aria-selected={mode===m.id} aria-controls="evidence-panel" disabled={busy} onClick={() => { setMode(m.id); setRepaired(null); }}>{m.label}</button>)}
     </div>
     {error && <div className="notice notice--warn" role="alert">{error}</div>}
     <div id="evidence-panel" role="tabpanel" aria-labelledby={`tab-${mode}`} aria-busy={loading}>
-      {loading ? <div className="card empty" role="status"><Loader2 className="spin" size={20}/> Loading saved evidence…</div> : error ? <div className="card empty">Results unavailable. Refresh to try again.</div> : mode === "actual" ? <>
+      {mode === "csv" ? <SavingsScenarioPanel data={csvScenarios} lane={lane} reserve={reserve} objective={objective} loading={loading} error={error} onLane={setLane} onReserve={setReserve} onObjective={setObjective}/> : loading ? <div className="card empty" role="status"><Loader2 className="spin" size={20}/> Loading saved evidence…</div> : error ? <div className="card empty">Results unavailable. Refresh to try again.</div> : mode === "actual" ? <>
         <section className="card evidence-actual">
           <div className="evidence-section-heading"><div><span className="eyebrow">USER-REPORTED ACTUALS</span><h2>{actual?.status === "MEASURED" ? "Delivery performance against approved plans" : "Building an actual delivery record"}</h2></div><span className="mini">{actual?.samples ?? 0} linked outcomes</span></div>
           <p>{actual?.source}</p>
