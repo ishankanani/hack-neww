@@ -50,11 +50,19 @@ export default function App() {
   }, []);
   useEffect(() => {
     let alive = true;
-    const load = () => Promise.all([api.providers(), api.operations()]).then(([p, o]) => {
-      if (alive) { setProviders(p.providers); setOps(o); setErr(""); }
-    }).catch((e) => { if (alive) setErr(String(e)); });
+    let pending = false;
+    const load = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const [p, o] = await Promise.all([api.providers(), api.operations()]);
+        if (alive) { setProviders(p.providers); setOps(o); setErr(""); }
+      } catch (e) {
+        if (alive) setErr(String(e));
+      } finally { pending = false; }
+    };
     void load();
-    const timer = setInterval(load, 15000);
+    const timer = setInterval(() => { if (!document.hidden) void load(); }, 30000);
     return () => { alive = false; clearInterval(timer); };
   }, [tick]);
   const nodes = net?.nodes ?? [];

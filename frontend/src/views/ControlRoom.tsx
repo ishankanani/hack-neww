@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ShieldCheck, RefreshCw, Check, Pause, Plus, ClipboardList, TriangleAlert } from "lucide-react";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { NetNode, Shipment, Operations, RouteOption, Decision } from "../api/types";
 import { dt, eur } from "../lib";
 import { PlanChangeNotice } from "../components/PlanChangeNotice";
@@ -15,15 +15,19 @@ import "../manager-control.css";
 
 type QueueGroup="all"|"planned"|"review"|"active";
 const routeClear=(o?:RouteOption)=>!!o&&o.route_feasible!==false&&o.capacity?.feasible!==false&&["CLEAR","NO_ZONE"].includes(o.avoidance_status??"");
-const groupOf=(s:Shipment):QueueGroup=>s.hold||s.plan_change?.material||["CRITICAL","HIGH"].includes(s.dispatch?.priority??"")?"review":!s.approved_at?"planned":s.status==="ARRIVAL EXPECTED"||s.dispatch?.priority==="REVIEW"?"review":"active";
+const groupOf=(s:Shipment):QueueGroup=>s.status==="ON HOLD"||s.hold||s.plan_change?.material||["CRITICAL","HIGH"].includes(s.dispatch?.priority??"")?"review":!s.approved_at?"planned":s.status==="ARRIVAL EXPECTED"||s.dispatch?.priority==="REVIEW"?"review":"active";
 const groupLabel=(s:Shipment)=>({planned:"Planned",review:"Review required",active:"Active",all:"All"}[groupOf(s)]);
 
 export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourney,reviewRequest,onSaved}:{nodes:NetNode[];onChange:()=>void;refreshKey?:number;active?:boolean;savedJourney?:Shipment|null;reviewRequest?:{id:string;version:number}|null;onSaved?:(s:Shipment)=>void}){
  const [ships,setShips]=useState<Shipment[]>([]),[ops,setOps]=useState<Operations|null>(null),[detail,setDetail]=useState<Shipment|null>(null);
  const [sel,setSel]=useState(0),[decidedBy,setDecidedBy]=useState(()=>{try{return localStorage.getItem("dachser-decided-by")??""}catch{return ""}}),[reason,setReason]=useState(""),[ack,setAck]=useState(false),[busy,setBusy]=useState(false);
  const [err,setErr]=useState(""),[msg,setMsg]=useState(""),[filter,setFilter]=useState<QueueGroup>("all"),[creating,setCreating]=useState(false);
+ const [queueError,setQueueError]=useState(false);
  const [routeDraft,setRouteDraft]=useState(false);
  const [revising,setRevising]=useState<Decision|null>(null);
+ const [savingDecision,setSavingDecision]=useState(false);
+ const submission=useRef<{key:string;id:string}|null>(null);
+ const decisionInFlight=useRef(false);
  const reviewPanel=useRef<HTMLElement|null>(null);
  const loadId=useRef(0);const openedSaved=useRef("");const alive=useRef(true);const reviewId=useRef(0);
  // Journeys saved in this browser stay listed until the server's own list contains
@@ -37,14 +41,14 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
  const load=useCallback(async()=>{const request=++loadId.current;try{const [s,o]=await Promise.all([api.shipments(),api.operations()]);if(alive.current&&request===loadId.current){
   const listed=new Set(s.shipments.map(x=>x.id));const now=Date.now();const kept:Shipment[]=[];
   pinned.current.forEach((pin,id)=>{if(listed.has(id)||now-pin.at>120000)pinned.current.delete(id);else kept.push(pin.ship)});
-  setShips([...kept,...s.shipments].filter(x=>x.status!=="DELIVERED").sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)));setOps(o)}}catch(e){if(alive.current)setErr(String(e))}},[]);
- useEffect(()=>{if(!active)return;void load();const timer=window.setInterval(()=>{if(!document.hidden)void load()},30000);return()=>clearInterval(timer)},[active,refreshKey,load]);
+  setShips([...kept,...s.shipments].filter(x=>x.status!=="DELIVERED").sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)));setOps(o);setQueueError(false)}}catch{if(alive.current&&request===loadId.current)setQueueError(true)}},[]);
+ useEffect(()=>{if(!active)return;void load();const timer=window.setInterval(()=>{if(!document.hidden&&!decisionInFlight.current)void load()},30000);return()=>clearInterval(timer)},[active,refreshKey,load]);
  useEffect(()=>{if(savedJourney){pinned.current.set(savedJourney.id,{ship:savedJourney,at:Date.now()});setShips(prev=>[savedJourney,...prev.filter(s=>s.id!==savedJourney.id)])}},[savedJourney]);
  async function review(id:string,recalculate=false,decisionToRevise?:Decision){
   if(busy)return;const request=++reviewId.current;setBusy(true);setErr("");setMsg("");setCreating(false);
-  try{const saved=await api.shipment(id);const moving=!!saved.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(saved.status);const stale=moving&&(!saved.vehicle_position||Date.now()-Date.parse(saved.vehicle_position.reported_at)>900000);
+  try{const saved=recalculate&&detail?.id===id?detail:await api.shipment(id);const moving=!!saved.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(saved.status);const stale=moving&&(!saved.vehicle_position||Date.now()-Date.parse(saved.vehicle_position.reported_at)>900000);
    const s=recalculate&&!stale?await api.replan(id):saved;if(!alive.current||reviewId.current!==request)return;
-   setDetail(s);const preferred=s.options?.findIndex(o=>o.route_id===s.accepted_plan?.route_id)??-1;setSel(preferred>=0?preferred:s.selected_option??0);setAck(false);setReason(decisionToRevise?.reason??"");setRevising(decisionToRevise??null);setRouteDraft(false);await load();
+   setDetail(s);const preferred=s.options?.findIndex(o=>o.route_id===s.accepted_plan?.route_id)??-1;setSel(preferred>=0?preferred:s.selected_option??0);setAck(false);if(decisionToRevise||detail?.id!==id)setReason(decisionToRevise?.reason??"");setRevising(decisionToRevise??(detail?.id===id?revising:null));setRouteDraft(false);if(recalculate)void load();
    if(decisionToRevise)reviewPanel.current?.scrollIntoView({behavior:"smooth",block:"start"});
   }catch(e){if(alive.current)setErr(String(e));if(decisionToRevise)throw e}finally{if(alive.current&&reviewId.current===request)setBusy(false)}
  }
@@ -53,10 +57,37 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
  function proposed(s:Shipment){setDetail(s);const preferred=s.options?.findIndex(o=>o.manager_requested&&routeClear(o))??-1;setSel(preferred>=0?preferred:0);setAck(false);setReason("");setRouteDraft(false);void load();onChange()}
  function created(s:Shipment){setCreating(false);setRevising(null);setDetail(s);setSel(s.selected_option??0);setShips(prev=>[s,...prev.filter(x=>x.id!==s.id)]);setFilter("all");setMsg(`${s.id} saved. Review the route and record your decision.`);onSaved?.(s);onChange()}
  async function decide(action:string){
-  if(!detail)return;setBusy(true);setErr("");const selectedRoute=detail.options?.[sel]?.route_id;
-  try{await api.decide({shipment_id:detail.id,action,option:sel,revision:detail.options?.[sel]?.revision??-1,quote_id:detail.options?.[sel]?.quote_id??"",reason,decided_by:decidedBy.trim(),acknowledge_deadline:ack,...(revising?{supersedes_decision_id:revising.id,supersedes_updated_at:revising.updated_at}:{})});
-   setMsg(revising?"Revised decision saved. The original remains in history.":action==="accept"?"Route approved and saved.":action==="hold"?"Hold or safe-stop request recorded.":action==="keep"?"Current plan retained.":"Decision deferred.");await load();onChange();setDetail(null);setRevising(null);
-  }catch(e){if(/conditions changed|quote replaced|recalculate/i.test(String(e))){try{const s=await api.replan(detail.id);setDetail(s);const next=s.options?.findIndex(o=>o.route_id===selectedRoute)??-1;setSel(next>=0?next:0);setAck(false);setErr("Conditions changed. Review the updated route before deciding.")}catch(error){setErr(String(error))}}else setErr(String(e))}finally{setBusy(false)}
+  const option=detail?.options?.[sel];
+  if(!detail||!option||busy||decisionInFlight.current)return;
+  const payload={shipment_id:detail.id,action,option:sel,revision:option.revision??-1,quote_id:option.quote_id,
+    reason,decided_by:decidedBy.trim(),acknowledge_deadline:ack,
+    ...(revising?{supersedes_decision_id:revising.id,supersedes_updated_at:revising.updated_at}:{})};
+  const key=JSON.stringify(payload);
+  if(submission.current?.key!==key)submission.current={key,id:crypto.randomUUID()};
+  decisionInFlight.current=true;setBusy(true);setSavingDecision(true);setErr("");setMsg("");
+  try{
+   const result=await api.decide({...payload,request_id:submission.current.id});
+   const {shipment_summary,...receipt}=result;
+   loadId.current++;submission.current=null;
+   if(shipment_summary)setShips(items=>items.map(s=>s.id===shipment_summary.id?{...s,...shipment_summary,...(action==="accept"?{hold:undefined}:{})}:s));
+   setOps(current=>current?{...current,decisions:[
+    ...current.decisions.filter(d=>d.id!==receipt.id).map(d=>d.id===receipt.supersedes_decision_id?{...d,superseded_by:receipt.id}:d),receipt
+   ]}:current);
+   setMsg(revising?"Revised decision saved. The original remains in history.":action==="accept"?"Route approved and saved.":action==="hold"?"Hold or safe-stop request recorded.":action==="keep"?"Current plan retained.":"Decision deferred.");
+   setDetail(null);setRevising(null);onChange();
+  }catch(e){
+   if(e instanceof ApiError&&e.code==="REVIEW_UPDATED"){
+    setErr(e.message);
+    try{
+     const updated=await api.shipment(detail.id);
+     setDetail(updated);
+     const next=updated.options?.findIndex(o=>o.route_id===option.route_id)??-1;
+     setSel(next>=0?next:0);setAck(false);
+    }catch{setErr("Live conditions changed. Reopen the journey to review the updated options.")}
+   }else if(!(e instanceof ApiError)||e.status>=500){
+    setErr("We couldn’t confirm the save. Retry the same decision. It will only be recorded once.");
+   }else setErr(e.message);
+  }finally{decisionInFlight.current=false;setBusy(false);setSavingDecision(false)}
  }
  async function scenarioChanged(){await load();setDetail(null);setRevising(null);onChange()}
  const selected=detail?.options?.[sel];const moving=!!detail&&(!!detail.movement_started_at||["IN TRANSIT","DELAYED","ARRIVAL EXPECTED"].includes(detail.status));
@@ -67,6 +98,8 @@ export function ControlRoom({nodes,onChange,refreshKey=0,active=true,savedJourne
  return <>
   <div className="page-heading control-heading"><div><h1>Control room</h1></div><button className="btn" disabled={busy} onClick={()=>{setCreating(true);setDetail(null);setRevising(null);setErr("");setMsg("")}}><Plus size={16}/>New manager journey</button></div>
   {err&&<div role="alert" className="notice notice--warn">{err}</div>}{msg&&<div role="status" className="notice notice--info">{msg}</div>}
+  {savingDecision&&<div role="status" className="notice notice--info">Checking the route and saving the decision…</div>}
+  {queueError&&<div role="status" className="notice notice--warn">Couldn’t refresh the queue. <button className="linkbtn" onClick={()=>void load()}>Retry queue refresh</button></div>}
   <div className="control-overview">{(["planned","review","active"] as const).map(group=><button key={group} aria-pressed={filter===group} onClick={()=>setFilter(filter===group?"all":group)}><span className={`overview-icon ${group}`}>{group==="planned"?<ClipboardList size={19}/>:group==="review"?<TriangleAlert size={19}/>:<ShieldCheck size={19}/>}</span><span>{group==="planned"?"Planned journeys":group==="review"?"Review required":"Active journeys"}<b>{ships.filter(s=>groupOf(s)===group).length}</b></span></button>)}</div>
   <div className="control-layout">
    <section className="card review-queue"><div className="card__h"><h2>Journeys <span className="mini">{visibleShips.length}</span></h2><button className="icon-button" disabled={busy} onClick={()=>void load()} aria-label="Refresh attention queue"><RefreshCw size={14}/></button></div>
