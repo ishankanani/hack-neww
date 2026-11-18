@@ -20,9 +20,22 @@ def corridor_distance(n, geometry):
         best = min(best, math.hypot(x+t*dx,y+t*dy))
     return best
 
+def thin(geometry, min_km=0.5):
+    """Keep one point per ~0.5 km. Against a 35 km corridor the error is negligible,
+    and it makes the corridor check ~20x cheaper on a 15,000-point road line."""
+    if len(geometry) < 3: return geometry
+    out = [geometry[0]]
+    for p in geometry[1:-1]:
+        q = out[-1]
+        dx = (p[0]-q[0])*111.32*math.cos(math.radians(p[1])); dy = (p[1]-q[1])*111.32
+        if dx*dx+dy*dy >= min_km*min_km: out.append(p)
+    out.append(geometry[-1])
+    return out
+
 def select_hubs(origin, destination, available_hubs, existing_route, routing, constraints):
     if not existing_route.get("geometry"):
         return []  # Never claim route relevance from a geographic midpoint.
+    corridor = thin(existing_route["geometry"])
     blocked = constraints.get("blocked", set())
     candidates = []
     baseline = existing_route["distance_km"]
@@ -30,9 +43,10 @@ def select_hubs(origin, destination, available_hubs, existing_route, routing, co
         if n["id"] in {origin["id"], destination["id"]} or n["id"] in blocked or not n.get("operational", True): continue
         if not n.get("transfer_enabled", True) or constraints.get("ldm",0) > n.get("capacity_ldm", 13.6): continue
         remaining = _haversine_km(ll(n), ll(destination))
-        if remaining < 8 or corridor_distance(n, existing_route["geometry"]) > constraints.get("corridor_km", 35): continue
+        if remaining < 8: continue
         # Straight-line pre-check (road distance is at least this long); the road check follows below.
         if remaining / AVERAGE_TRUCK_KMH * 60 < HUB_MIN_REMAINING_MINUTES * 0.6: continue
+        if corridor_distance(n, corridor) > constraints.get("corridor_km", 35): continue
         candidates.append((remaining, n))
     candidates.sort(key=lambda x:x[0])
     def verify(item):

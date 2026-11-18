@@ -166,6 +166,29 @@ def load(key, fallback, force=False):
         return json.loads(zlib.decompress(bytes(payload)))
 
 
+def load_many(fallbacks):
+    """Like load() for several keys, in one round trip when nothing changed.
+
+    Returns {key: payload} only for keys whose stored version differs from the one
+    this worker last read (all keys on the first call)."""
+    if not configured(): return {}
+    keys = list(fallbacks)
+    with session():
+        connection = _connection.get()
+        versions = dict(connection.execute("SELECT name,version FROM dachser_state WHERE name = ANY(%s)", (keys,)).fetchall())
+        for key in keys:
+            if key not in versions:
+                connection.execute("INSERT INTO dachser_state(name,payload) VALUES(%s,%s) ON CONFLICT DO NOTHING", (key, encode(fallbacks[key])))
+                versions[key] = None
+        changed = [k for k in keys if versions[k] is None or _versions.get(k) != versions[k]]
+        if not changed: return {}
+        out = {}
+        for name, payload, version in connection.execute("SELECT name,payload,version FROM dachser_state WHERE name = ANY(%s)", (changed,)).fetchall():
+            _versions[name] = version
+            out[name] = json.loads(zlib.decompress(bytes(payload)))
+        return out
+
+
 def save(key, value):
     if not configured(): return False
     with session(write=True):

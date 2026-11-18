@@ -7,6 +7,7 @@ status); manager hub delays; audit. See README for the section-by-section map.
 from __future__ import annotations
 
 import os
+import time
 from copy import copy, deepcopy
 from .runtime import configure_runtime, deployment_info
 configure_runtime()
@@ -92,7 +93,7 @@ app = FastAPI(title="DACHSER Live Transit Planner", version="3.0.0", lifespan=li
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(map_tiles_router)
 
-STATELESS_ROUTES={"/api/health","/api/network","/api/providers","/api/settings","/api/savings/scenarios","/api/transport-calendar"}
+STATELESS_ROUTES={"/api/health","/api/network","/api/providers","/api/holidays","/api/settings","/api/savings/scenarios","/api/transport-calendar"}
 STATELESS_PREFIXES=("/api/map-tiles/","/api/traffic-tiles/")
 
 
@@ -100,6 +101,7 @@ STATELESS_PREFIXES=("/api/map-tiles/","/api/traffic-tiles/")
 async def fresh_api_responses(request,call_next):
     # These endpoints do not read saved journeys or mutable operations data.
     stateless=request.url.path in STATELESS_ROUTES or request.url.path.startswith(STATELESS_PREFIXES)
+    started=time.perf_counter();db_ms=0.0
     if persistence.configured() and not stateless and (request.method=="GET" or request.url.path=="/api/route"):
         from starlette.concurrency import run_in_threadpool
         try:await run_in_threadpool(refresh_shared_state)
@@ -109,16 +111,20 @@ async def fresh_api_responses(request,call_next):
             try:await run_in_threadpool(refresh_shared_state)
             except persistence.StorageUnavailable as exc:
                 return JSONResponse(status_code=503,content={"detail":str(exc)},headers={"Cache-Control":"no-store"})
+        db_ms=(time.perf_counter()-started)*1000
     response=await call_next(request)
-    if request.url.path.startswith("/api/"):response.headers["Cache-Control"]="no-store"
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"]="no-store"
+        # Visible in the browser's network panel: shared-state refresh vs. total server time.
+        response.headers["Server-Timing"]=f"db;dur={db_ms:.0f}, total;dur={(time.perf_counter()-started)*1000:.0f}"
     return response
 
 
 def refresh_shared_state():
     if not persistence.configured() or "ships" not in S:return
     with LOCK,persistence.session():
-        ops=persistence.load("operations.json",S["operations"].data)
-        ships=persistence.load("shipments.json",S["ships"].data)
+        fresh=persistence.load_many({"operations.json":S["operations"].data,"shipments.json":S["ships"].data})
+        ops=fresh.get("operations.json");ships=fresh.get("shipments.json")
         if ops is not None:
             S["operations"].data=ops
             S["hub_delays"]=ops.setdefault("hub_delays",{})

@@ -44,7 +44,7 @@ function validatePlannerInputs(v:{origin:string;destination:string;depart:string
  for(const [key,label,min,max] of truckRules)errors[key]=rangeError(v.truck[key],min,max,label);
  return Object.fromEntries(Object.entries(errors).filter(([,message])=>message)) as Record<string,string>;
 }
-export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNode[];revision:number;onChange:()=>void;onReview:(id?:string)=>void;onSaved?:(shipment:Shipment)=>void}){
+export function Planner({nodes,revision,operations,onChange,onReview,onSaved}:{nodes:NetNode[];revision:number;operations?:Operations|null;onChange:()=>void;onReview:(id?:string)=>void;onSaved?:(shipment:Shipment)=>void}){
  const [planningRules,setPlanningRules]=useState<PlanningRules>({region:"DE-BW",company_sunday_hold:true,trailer_attached:true});
  const [origin,setOrigin]=useState("R16"),[dest,setDest]=useState("R21");
  const [depart,setDepart]=useState(()=>localInput(new Date())),[deadline,setDeadline]=useState(()=>localInput(new Date(Date.now()+3*86400000)));
@@ -108,7 +108,8 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
  latestGo.current=go;
  // Loading a sample or switching its weather preview calculates straight away; the current map stays until the new result arrives.
  useEffect(()=>{if(autoRun.current&&sample){autoRun.current=false;void go()}},[sample,sampleWeather]);
- useEffect(()=>{let active=true;api.operations().then(r=>{if(active)setOps(r)}).catch(e=>{if(active)setErr(String(e))});return()=>{active=false}},[revision]);
+ // Reuse the workspace's operations snapshot instead of fetching the same data again.
+ useEffect(()=>{if(operations)setOps(prev=>prev&&prev.revision>operations.revision?prev:operations)},[operations]);
  useEffect(()=>{if(resp&&(resp.revision??-1)<revision&&JSON.stringify(lastBody.current)===latestBody.current) void go(true)},[revision]);
  async function scenarioChanged(){const o=await api.operations();setOps(o);onChange();if(!resp)await go()}
  async function weatherChanged(preferClearRoute=true){preferClear.current=preferClearRoute;const o=await api.operations();wantedRevision.current=Math.max(wantedRevision.current,o.revision);setOps(o);onChange();await go(true)}
