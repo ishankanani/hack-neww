@@ -110,7 +110,7 @@ export default function App() {
 
         <div style={{ display: tab === "planner" ? "block" : "none" }}>
           {visited.has("planner") && (
-            <Planner nodes={nodes} revision={ops?.revision ?? 0} onSaved={saved} onChange={refresh} onReview={(id) => {if(id)setReviewRequest(prev=>({id,version:(prev?.version??0)+1}));selectTab("control")}} />
+            <Planner nodes={nodes} revision={ops?.revision ?? 0} operations={ops} onSaved={saved} onChange={refresh} onReview={(id) => {if(id)setReviewRequest(prev=>({id,version:(prev?.version??0)+1}));selectTab("control")}} />
           )}
         </div>
         <div style={{ display: tab === "control" ? "block" : "none" }}>

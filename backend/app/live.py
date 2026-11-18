@@ -21,7 +21,7 @@ def condition(code):
 class Forecasts:
     def __init__(self):
         self.cache={}; self.last_success=None; self.error=None; self.retry_after=0
-        self.client=httpx.Client(timeout=5)
+        self.client=httpx.Client(timeout=2.5)  # Open-Meteo normally answers in ~0.4 s; never hold a search for 5 s
     def fetch(self, points, times):
         keys=[(round(p[0],3),round(p[1],3)) for p in points]
         missing=list(dict.fromkeys(k for k in keys if k not in self.cache or time.time()-self.cache[k][0]>900))
