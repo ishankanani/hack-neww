@@ -7,8 +7,8 @@ export interface RelationHistory { samples: number; avg_utilisation: number; spi
 export interface OperationalDelay { minutes: number; reason: string; note?: string; status: string; at: string; }
 export interface Hub extends NetNode { transfer: TransferStat | Record<string, never>; history: RelationHistory | Record<string, never>; operational_delay: OperationalDelay | null; expected_transfer_minutes: number; }
 
-export interface JourneyStep { type: "handling" | "drive" | "legal_wait" | "hub_delay" | "weekend_hold" | "weather" | "schedule_wait" | "manager_wait"; location: string; location_name: string; start: string; end: string; minutes: number; detail: string; source: string; }
-export interface Components { transport: number; transfer: number; hub_delay: number; traffic: number; legal_wait: number; weekend_hold?: number; weather?: number; }
+export interface JourneyStep { type: "handling" | "drive" | "legal_wait" | "hub_delay" | "weekend_hold" | "weather" | "schedule_wait" | "manager_wait" | "driver_break" | "driver_rest" | "weekly_rest"; location: string; location_name: string; start: string; end: string; minutes: number; detail: string; source: string; }
+export interface Components { driver_break?:number; driver_rest?:number; weekly_rest?:number; transport: number; transfer: number; hub_delay: number; traffic: number; legal_wait: number; weekend_hold?: number; weather?: number; }
 export interface OptCost { transport_eur: number; fuel_l: number; fuel_eur: number; distance_km: number; cost_per_kg: number | null; }
 export interface OptRisk { level: string; score: number; reasons: string[]; exposure_eur: number; deadline_ok: boolean; }
 export interface OptHistory { avg_cost_eur: number; avg_fuel_l: number; reliability_pct: number; samples: number; }
@@ -17,6 +17,8 @@ export interface Incident { id:string; geometry:{type:string;coordinates: number
 export interface MapConditions { weather:LiveWeather[]; incidents:{status:string;items:Incident[];fetched_at?:string}; traffic_configured:boolean; at:string; fetched_at:string; }
 export interface TruckProfile { height_m:number; width_m:number; length_m:number; gross_weight_kg:number; }
 export interface RouteOption {
+  planning_rules?:PlanningRules;
+  driver_plan?:{assumption:string;break_minutes:number;rest_minutes:number;requires_review:string[]}|null;
   road_legs?: {from:string;to:string;departure?:string;arrival?:string;source?:string;km?:number}[];
   route_feasible?:boolean;unavailable_reasons?:string[];manager_requested?:boolean;
   arrival_evidence?:ArrivalEvidence;
@@ -172,3 +174,7 @@ export interface ActualOutcome { actual_departure:string; actual_arrival:string;
 export interface ActualEvidence { id:string;route:string[];quote_id:string;approved_at:string;recorded_at:string|null;approved_eta:string;actual_arrival:string;actual_cost_eur:number;approved_cost_eur:number;arrival_error_minutes:number;cost_error_eur:number;on_time:boolean|null;source:string; }
 export interface Performance { samples:number; minimum_samples:number; status:string; arrival_mae_minutes:number|null; cost_error_eur:number|null; on_time_pct:number|null; deadline_samples:number; source:string; excluded_records:number;outcomes:ActualEvidence[]; }
 export interface AppSettings { tomtom_configured: boolean; tomtom_masked: string; traffic_status: string; traffic_mode: string; }
+
+export interface PlanningRules {region:string;company_sunday_hold:boolean;trailer_attached:boolean}
+export interface TransportCalendarDay {date:string;weekday:number;sunday:boolean;holiday:string|null;truck_ban:boolean;ban_start:string|null;ban_end:string|null;company_hold:boolean;summer_route_review:boolean}
+export interface TransportCalendarDoc {year:number;month:number;region:string;region_name:string;timezone:string;days:TransportCalendarDay[];regions:{id:string;name:string}[];scope:string;notes:string[];source:string}

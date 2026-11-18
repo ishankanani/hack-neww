@@ -1,34 +1,58 @@
 """One ETA engine shared by route search, saved shipments and manager replanning."""
 import math
+from copy import deepcopy
 from datetime import timedelta
-from .restrictions import drive_with_restrictions
+from .restrictions import drive_with_restrictions, BERLIN
 from .weekend import hub_release, leg_start, HOLD_TEXT as WEEKEND_HOLD_TEXT
 from .weather_rules import at_hub
 from .operations import parse
 from .live import DEFAULT_TRUCK
 from .schedules import next_departure
 from .weather_routes import active_zones, crossed_zones, closest_clear_detour, IMPACT_MINUTES, CLEARANCE_KM
+from .driver_hours import DriverClock, drive_with_driver_rules
+from .transport_calendar import ban_dates
 
 def _haversine_km(a,b):
     dlat=math.radians(b[0]-a[0]); dlon=math.radians(b[1]-a[1])
     x=math.sin(dlat/2)**2+math.cos(math.radians(a[0]))*math.cos(math.radians(b[0]))*math.sin(dlon/2)**2
     return 12742*math.asin(min(1,math.sqrt(x)))
 
-def compute_journey(network, holidays, transfer, hub_delays, providers, origin, dest, depart_utc, path=None, operations=None, truck=None, avoid_zones=False, skip_origin_handling=False, road_overrides=None):
+def compute_journey(network, holidays, transfer, hub_delays, providers, origin, dest, depart_utc, path=None, operations=None, truck=None, avoid_zones=False, skip_origin_handling=False, road_overrides=None, planning_rules=None):
     path = path or [origin,dest]
+    driver = DriverClock(depart_utc) if planning_rules is not None else None
+    company_hold = planning_rules.get("company_sunday_hold",False) if planning_rules else True
+    truck_ban_applies = (truck or {}).get("gross_weight_kg",40000)>7500 or (planning_rules or {}).get("trailer_attached",True)
+    if planning_rules:
+        year=depart_utc.astimezone(BERLIN).year
+        holidays=ban_dates(year,min(2100,year+2),planning_rules["region"])
     applied_global_traffic=set()
     rows=[]; cur=depart_utc; geometry=[]; all_geometry=True; leg_data=[]; alerts=[]; forecasts=[]; traffic_sections=[]; services=[]; zone_impacts=[]; weather_detours=[]; detour_km=0
     comp={k:0 for k in ("transport","transfer","hub_delay","traffic","legal_wait","weekend_hold","weather","schedule_wait")}
+    comp.update({"driver_break":0,"driver_rest":0,"weekly_rest":0})
+    def preview_drive(start,minutes,wait_from=None):
+        if not driver:
+            return drive_with_restrictions(start,minutes,holidays)
+        clock=deepcopy(driver)
+        if wait_from is not None and start>wait_from:
+            clock.credit_wait(wait_from,start)
+        return drive_with_driver_rules(start,minutes,holidays,clock,truck_ban_applies=truck_ban_applies)
     def add(kind,loc,start,end,detail,source):
+        if driver and (kind=="schedule_wait" or kind=="weekend_hold" or kind=="hub_delay" and source=="MANAGER CLOSURE"):
+            included=driver.credit_wait(start,end)
+            if included:detail+=f" · includes {included} min planned off-duty driver rest"
         rows.append({"type":kind,"location":loc,"location_name":network["nodes"][loc]["name"],"start":start.isoformat(),"end":end.isoformat(),"minutes":round((end-start).total_seconds()/60),"detail":detail,"source":source})
     for i,(a,b) in enumerate(zip(path,path[1:])):
         na,nb=network["nodes"][a],network["nodes"][b]
         arrival=cur
         h=transfer.get(na.get("relation"),{}).get("avg_transfer_minutes",120)
         if i==0 and skip_origin_handling:h=0
+        if driver and cur+timedelta(minutes=h)>driver.daily_rest_end+timedelta(hours=13):
+            end=driver.pause(cur,660,"driver_rest")
+            add("driver_rest",a,cur,end,"Regular daily rest before the next handling period","EU 561/2006 · planned single-driver rest")
+            comp["driver_rest"]+=660;cur=end
         if h:add("handling",a,cur,cur+timedelta(minutes=h),"Loading & handling" if i==0 else "Intermediate hub transfer","Historical proxy / 120-minute baseline")
         comp["transfer"]+=h; cur+=timedelta(minutes=h)
-        release=hub_release(arrival,cur,intermediate=i>0)
+        release=hub_release(arrival,cur,intermediate=i>0) if company_hold else cur
         if release>cur:
             add("weekend_hold",a,cur,release,WEEKEND_HOLD_TEXT,"BUSINESS POLICY")
             comp["weekend_hold"]+=round((release-cur).total_seconds()/60); cur=release
@@ -39,7 +63,7 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
         events=operations.data["events"] if operations else []
         # A timed hub delay applies to every visit overlapping its effective
         # window, including trucks already handling or waiting for a service.
-        planned_departure,_=next_departure(cur,a,b,schedules,holidays,events)
+        planned_departure,_=next_departure(cur,a,b,schedules,holidays,events,company_sunday_hold=company_hold,truck_ban_applies=truck_ban_applies)
         visit_end=max(cur+timedelta(minutes=1),planned_departure)
         if operations:
             for ev in events:
@@ -48,14 +72,14 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
                 add("hub_delay",a,cur,end,ev["reason"],"MANAGER HUB EVENT")
                 comp["hub_delay"]+=ev["minutes"]; cur=end
         # Forecast at the expected service departure; readiness includes the cutoff buffer.
-        expected,service=next_departure(cur,a,b,schedules,holidays,events)
+        expected,service=next_departure(cur,a,b,schedules,holidays,events,company_sunday_hold=company_hold,truck_ban_applies=truck_ban_applies)
         routing_start=expected
         road=(road_overrides or {}).get((a,b))
         if road is None:road=providers.tomtom.route((na["lat"],na["lon"]),(nb["lat"],nb["lon"]),routing_start,truck or DEFAULT_TRUCK) if hasattr(providers,"tomtom") else None
         road=dict(road or providers.routing.leg((na["lat"],na["lon"]),(nb["lat"],nb["lon"])))
         original_road=road
         estimated_minutes=max(1,road.get("duration_minutes",60),math.ceil(road.get("distance_km",0)/65*60))
-        estimated_arrival=drive_with_restrictions(routing_start,estimated_minutes,holidays)["arrival"]
+        estimated_arrival=preview_drive(routing_start,estimated_minutes)["arrival"]
         zones=active_zones(operations,routing_start,estimated_arrival)
         hit=crossed_zones(road.get("geometry"),zones,CLEARANCE_KM)
         if avoid_zones and hit:
@@ -64,7 +88,7 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
             while True:
                 road=closest_clear_detour(providers,(na["lat"],na["lon"]),(nb["lat"],nb["lon"]),original_road,zones,routing_start,truck or DEFAULT_TRUCK)
                 if not road: raise ValueError("No verified road detour clears the simulated weather zones")
-                end=drive_with_restrictions(routing_start,max(road["duration_minutes"],math.ceil(road["distance_km"]/65*60)),holidays)["arrival"]
+                end=preview_drive(routing_start,max(road["duration_minutes"],math.ceil(road["distance_km"]/65*60)))["arrival"]
                 added=[z for z in active_zones(operations,routing_start,end) if z["id"] not in {v["id"] for v in zones}]
                 if not added:break
                 zones.extend(added)
@@ -96,7 +120,7 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
             coords=road["geometry"]
             fractions=[0,.5,1]
             points=[tuple(reversed(coords[round((len(coords)-1)*f)])) for f in fractions]
-            times=[drive_with_restrictions(routing_start,max(1,round((drive+road.get("traffic_minutes",0))*f)),holidays)["arrival"] for f in fractions]
+            times=[preview_drive(routing_start,max(1,round((drive+road.get("traffic_minutes",0))*f)))["arrival"] for f in fractions]
             live=providers.forecasts.fetch(points,times)
             forecasts.extend(live)
         if operations:
@@ -120,7 +144,17 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
             end=max(parse(e["end"]) for e in closures)
             add("hub_delay",a,cur,end,"Departure facility closed: "+"; ".join(e["reason"] for e in closures),"MANAGER CLOSURE")
             comp["hub_delay"]+=round((end-cur).total_seconds()/60); cur=end
-        departure,service=next_departure(cur,a,b,schedules,holidays,events)
+        if driver:
+            for _ in range(10):
+                required=driver.required_pause(cur)
+                if not required:break
+                duration,kind,reason=required;end=driver.pause(cur,duration,kind)
+                add(kind,a,cur,end,reason,"EU 561/2006 · planned single-driver rest")
+                comp[kind]+=duration;cur=end
+        def fits_weekend(start):
+            return leg_start(start, lambda t: preview_drive(t, drive + road.get("traffic_minutes", 0), wait_from=cur)["arrival"]) == start
+
+        departure,service=next_departure(cur,a,b,schedules,holidays,events,company_sunday_hold=company_hold,truck_ban_applies=truck_ban_applies,departure_filter=fits_weekend if company_hold else None)
         if service:
             cutoff=departure-timedelta(minutes=service["cutoff_minutes"])
             services.append({"service_id":service.get("id"),"from":a,"to":b,
@@ -167,11 +201,13 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
         comp["traffic"]+=traffic
         # Business weekend rule: the whole leg, including delivery, must avoid Sat 15:00 – Mon 05:00.
         # The truck waits at this hub rather than stopping on the road.
-        leave=leg_start(cur,lambda t:drive_with_restrictions(t,drive+traffic,holidays)["arrival"])
+        leave=leg_start(cur,lambda t:preview_drive(t,drive+traffic)["arrival"]) if company_hold else cur
         if leave>cur:
+            if service:
+                raise ValueError("Updated travel time puts this scheduled service inside the company weekend hold; review the departure timetable")
             add("weekend_hold",a,cur,leave,WEEKEND_HOLD_TEXT,"BUSINESS POLICY")
             comp["weekend_hold"]+=round((leave-cur).total_seconds()/60); cur=leave; departure=leave
-        leg=drive_with_restrictions(cur,drive+traffic,holidays)
+        leg=drive_with_driver_rules(cur,drive+traffic,holidays,driver,truck_ban_applies=truck_ban_applies) if driver else drive_with_restrictions(cur,drive+traffic,holidays)
         final_hits=crossed_zones(road.get("geometry"),active_zones(operations,cur,leg["arrival"]),CLEARANCE_KM)
         if final_hits:
             if avoid_zones:
@@ -180,9 +216,9 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
         t=cur
         for pause in leg["pauses"]:
             if pause["start"]>t: add("drive",a,t,pause["start"],f"{na['name']} → {nb['name']} · {km} km"+(f" · +{traffic}m traffic" if traffic else ""),src)
-            kind="weekend_hold" if "Weekend Hold" in pause["reason"] else "legal_wait"
+            kind=pause.get("kind", "weekend_hold" if "Weekend Hold" in pause["reason"] else "legal_wait")
             # A pause after driving is roadside, not falsely shown as still at the hub.
-            add(kind,a,pause["start"],pause["end"],pause["reason"]+(" · safe stopping point en route" if pause["start"]>cur else " · at departure station"),"BUSINESS POLICY" if kind=="weekend_hold" else "CALENDAR RULE (prototype)")
+            add(kind,a,pause["start"],pause["end"],pause["reason"]+(" · planned safe stop en route" if pause["start"]>cur else " · at departure station"),"BUSINESS POLICY" if kind=="weekend_hold" else "EU 561/2006" if kind in {"driver_break","driver_rest","weekly_rest"} else "StVO §30 · selected federal state")
             comp[kind]+=pause["minutes"]; t=pause["end"]
         if leg["arrival"]>t: add("drive",a,t,leg["arrival"],f"{na['name']} → {nb['name']} · {km} km"+(f" · +{traffic}m traffic" if traffic else ""),src)
         cur=leg["arrival"]; comp["transport"]+=drive
@@ -202,7 +238,9 @@ def compute_journey(network, holidays, transfer, hub_delays, providers, origin, 
                 add("hub_delay",b,cur,end,ev["reason"],"MANAGER HUB EVENT")
                 comp["hub_delay"]+=ev["minutes"]; cur=end
     return {"origin":origin,"destination":dest,"path":path,"depart_at":depart_utc.isoformat(),"eta":cur.isoformat(),
+            "planning_rules":planning_rules,
+            "driver_plan":{"assumption":"One fully rested driver at journey start; no earlier driving history. Loading is not a break.","break_minutes":driver.break_minutes,"rest_minutes":driver.rest_minutes,"requires_review":["Confirm tachograph history, other work and appropriate rest locations before dispatch.","Confirm all federal states crossed; regional holiday scope is selected manually."]} if driver else None,
             "zone_impacts":list({z["id"]:z for z in zone_impacts}.values()),"weather_detours":weather_detours,"avoidance_status":"CLEAR" if avoid_zones else "IMPACTED" if zone_impacts else "NO_ZONE", "detour_km":round(detour_km,1),
             "scheduled_services":services,"total_minutes":round((cur-depart_utc).total_seconds()/60),"components":comp,"steps":rows,
             "geometry":geometry if all_geometry else None,"road_legs":leg_data,"weather_alerts":list({r["id"]:r for r in alerts}.values()),"live_weather":forecasts,"traffic_sections":traffic_sections,"traffic_status":"LIVE_OR_PREDICTED" if any("TomTom" in l["source"] for l in leg_data) else ("SIMULATED" if traffic_sections or any(l.get("traffic_sections") for l in [road]) else ("NOT_CONFIGURED" if not getattr(getattr(providers,"tomtom",None),"key",None) else "UNAVAILABLE")),
-            "data_sources":{"transport":" + ".join(sorted({l["source"] for l in leg_data})),"transfer":"disposition.csv derived proxy","weather":"Open-Meteo forecasts + manual samples; impact is a prototype rule","weekend":"Full Sunday business hold","traffic":providers.traffic.status()}}
+            "data_sources":{"transport":" + ".join(sorted({l["source"] for l in leg_data})),"transfer":"disposition.csv derived proxy","weather":"Open-Meteo forecasts + manual samples; impact is a prototype rule","weekend":"Full Sunday business hold" if company_hold else "StVO §30 · Sunday 00:00–22:00 Europe/Berlin","driver":"EU 561/2006 · fully rested single-driver planning" if driver else "Legacy estimate; recalculate for driver rules","traffic":providers.traffic.status()}}

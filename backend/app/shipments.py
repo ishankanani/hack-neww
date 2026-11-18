@@ -115,7 +115,7 @@ def plan(ctx, origin, destination, depart_utc, weight_kg, required_delivery, val
     if only_paths is not None: paths=[(path,None) for path in only_paths]
     def build_option(path,hub,avoid=False,road_override=None,road_id=None):
         actual_departure=parse(wait_until) if wait_until else depart_utc
-        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid,skip_origin_handling=ctx.get("skip_origin_handling",False),road_overrides={(origin,destination):road_override} if road_override else None)
+        jr=compute_journey(net,ctx["holidays"],ctx["transfer"],ctx["hub_delays"],ctx["providers"],origin,destination,actual_departure,path,operations,truck,avoid_zones=avoid,skip_origin_handling=ctx.get("skip_origin_handling",False),road_overrides={(origin,destination):road_override} if road_override else None,planning_rules=ctx.get("planning_rules"))
         if wait_until:
             minutes=max(0,round((actual_departure-depart_utc).total_seconds()/60))
             jr["depart_at"]=depart_utc.isoformat();jr["total_minutes"]+=minutes
@@ -236,7 +236,7 @@ def review_options(ctx, ship):
     from .progress import dispatched,position_context,attach_completed,VEHICLE_NODE
     remaining=dispatched(ship)
     if remaining:ctx=position_context(ctx,ship)
-    ctx={**ctx,"original_origin":ship["origin"]}
+    ctx={**ctx,"original_origin":ship["origin"],"planning_rules":ship.get("planning_rules")}
     origin=VEHICLE_NODE if remaining else ship["origin"]
     destination=ship["destination"]
     path=ship["vehicle_position"]["remaining_path"] if remaining else ship["route"]
@@ -365,7 +365,7 @@ class Shipments:
                 raise ValueError("Selected route must start at the shipment origin and end at its destination")
             validate_path(self.ctx["network"],p["origin"],p["destination"],selected[1:-1])
         dep = datetime.fromisoformat(p["planned_departure"].replace("Z", "+00:00")).astimezone(timezone.utc)
-        opts = plan(self.context_for(p), p["origin"], p["destination"], dep, p.get("weight_kg", 0),
+        opts = plan({**self.context_for(p),"planning_rules":p.get("planning_rules")}, p["origin"], p["destination"], dep, p.get("weight_kg", 0),
                     p.get("required_delivery"), p.get("value_eur", 0), p.get("optimization","fastest"),p.get("truck"),required_paths=[p["selected_path"]] if p.get("selected_path") else None)
         chosen = next((i for i,o in enumerate(opts) if o.get("route_id") == p.get("selected_route_id")), -1) if p.get("selected_route_id") else -1
         if chosen<0: chosen = next((i for i,o in enumerate(opts) if o["path"] == p.get("selected_path")), 0)
@@ -374,7 +374,7 @@ class Shipments:
         rec = opts[chosen]
         ship = {
             "data_kind":"demo" if p.get("demo_session") or p.get("data_kind")=="demo" else "user", "demo_session":p.get("demo_session"),
-            "optimization": p.get("optimization","fastest"), "truck": p.get("truck"),
+            "optimization": p.get("optimization","fastest"), "truck": p.get("truck"), "planning_rules":p.get("planning_rules"),
             "id": sid, "origin": p["origin"], "destination": p["destination"],
             "current_location": p["origin"], "route": rec["path"],
             "next_hub": rec["path"][1] if len(rec["path"]) > 1 else None,

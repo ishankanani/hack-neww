@@ -91,7 +91,7 @@ app = FastAPI(title="DACHSER Live Transit Planner", version="3.0.0", lifespan=li
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(map_tiles_router)
 
-STATELESS_PATHS=("/api/map-tiles/","/api/health","/api/savings/scenarios")
+STATELESS_PATHS=("/api/map-tiles/","/api/health","/api/savings/scenarios","/api/transport-calendar")
 
 
 @app.middleware("http")
@@ -149,7 +149,14 @@ class TruckReq(BaseModel):
     length_m: float = Field(default=16.5, ge=3, le=20)
     gross_weight_kg: float = Field(default=40000, ge=1000, le=50000)
 
+class PlanningRulesReq(BaseModel):
+    region: Literal["DE-BW","DE-BY","DE-BE","DE-BB","DE-HB","DE-HH","DE-HE","DE-MV","DE-NI","DE-NW","DE-RP","DE-SL","DE-SN","DE-ST","DE-SH","DE-TH"] = "DE-BW"
+    company_sunday_hold: bool = True
+    trailer_attached: bool = True
+
+
 class RouteReq(BaseModel):
+    planning_rules: PlanningRulesReq = Field(default_factory=PlanningRulesReq)
     via_hubs: list[str] = Field(default_factory=list,max_length=6)
     sample_id: Optional[str] = None
     sample_weather: bool = False
@@ -178,6 +185,7 @@ class DelayReq(BaseModel):
 
 
 class ShipmentReq(BaseModel):
+    planning_rules: PlanningRulesReq = Field(default_factory=PlanningRulesReq)
     demo_session: Optional[str] = None
     optimization: Literal["fastest","cost","balanced"] = "fastest"
     truck: TruckReq = Field(default_factory=TruckReq)
@@ -237,11 +245,20 @@ def providers():
 
 @app.get("/api/holidays")
 def holidays():
-    today = datetime.now(timezone.utc).date().isoformat()
-    up = sorted([{"date": d, "name": n, "region": "Baden-Württemberg", "country": "DE",
-                  "transport_impact": "Prototype holiday window 00:00–22:00; Sunday business hold until Monday"}
-                 for d, n in S["holidays"].items() if d >= today], key=lambda x: x["date"])[:12]
-    return {"source": "kalender.csv (Baden-Württemberg)", "upcoming": up, "count": len(S["holidays"])}
+    from .transport_calendar import holidays as regional_holidays
+    from .restrictions import BERLIN
+    today=datetime.now(BERLIN).date()
+    dates={day:row for year in (today.year,today.year+1) for day,row in regional_holidays(year,"DE-BW").items()}
+    up=sorted([{"date":day,"name":row["name"],"region":"Baden-Württemberg","country":"DE",
+                "transport_impact":"Truck ban 00:00–22:00" if row["truck_ban"] else "Public holiday; no additional StVO §30 truck ban"}
+               for day,row in dates.items() if day>=today.isoformat()],key=lambda x:x["date"])[:12]
+    return {"source":"German regional holiday calendar / StVO §30(4)","upcoming":up,"count":len(dates)}
+
+
+@app.get("/api/transport-calendar")
+def transport_calendar(year:int=Query(ge=1900,le=2100),month:int=Query(ge=1,le=12),region:str="DE-BW",company_sunday_hold:bool=True):
+    from .transport_calendar import month_calendar
+    return month_calendar(year,month,region,company_sunday_hold)
 
 
 @app.get("/api/analytics/relations")
@@ -297,6 +314,7 @@ def route(req: RouteReq):
         from .journey_examples import example, isolated_context
         sample=example(req.sample_id);context=isolated_context(context)
     args=(req.origin,req.destination,depart,req.weight_kg,req.required_delivery.isoformat() if req.required_delivery else None,req.value_eur,req.optimization,req.truck.model_dump())
+    context["planning_rules"]=req.planning_rules.model_dump()
     options=plan_options(context,*args,required_paths=[requested_path] if requested_path else None)
     if sample and req.sample_weather:
         from .journey_examples import weather_for

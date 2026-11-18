@@ -28,11 +28,13 @@ def _restricted_day(d, holidays: dict):
     return False, None
 
 
-def restriction_at(instant_utc: datetime, holidays: dict):
-    """Is driving restricted at this instant? -> (bool, reason, window_end_utc)."""
+def restriction_at(instant_utc: datetime, holidays: dict, company_sunday_hold=True):
+    """Return restriction and release time. True retains the legacy company hold;
+    new legal planning explicitly passes False for Sunday's 22:00 release.
+    """
     local = instant_utc.astimezone(BERLIN)
     is_day, reason = _restricted_day(local.date(), holidays)
-    if local.weekday() == 6:
+    if local.weekday() == 6 and company_sunday_hold:
         end_local = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         return True, "Weekend Hold — Sunday no movement (business policy); next movement Monday", end_local.astimezone(timezone.utc)
     if is_day and local.hour < RESTRICTION_END_HOUR:

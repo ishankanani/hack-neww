@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, ArrowRightLeft, ShieldCheck, Loader2, Save } from "lucide-react";
 import { api } from "../api/client";
-import type { NetNode, RouteResp, Operations, TruckProfile, WeatherZoneInput, JourneyExample, Shipment } from "../api/types";
+import type { NetNode, RouteResp, Operations, TruckProfile, WeatherZoneInput, JourneyExample, Shipment, PlanningRules } from "../api/types";
 import { RouteCompare } from "../components/RouteCompare";
 import { SavedJourneys } from "../components/SavedJourneys";
 import { localInput } from "../lib";
+import { TransportCalendar } from "../components/TransportCalendar";
 type TruckInput = Record<keyof TruckProfile, string>;
 const truckRules = [
  ["height_m", "Height", 1.5, 4.5],
@@ -35,6 +36,7 @@ function validatePlannerInputs(v:{origin:string;destination:string;depart:string
  return Object.fromEntries(Object.entries(errors).filter(([,message])=>message)) as Record<string,string>;
 }
 export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNode[];revision:number;onChange:()=>void;onReview:(id?:string)=>void;onSaved?:(shipment:Shipment)=>void}){
+ const [planningRules,setPlanningRules]=useState<PlanningRules>({region:"DE-BW",company_sunday_hold:true,trailer_attached:true});
  const [origin,setOrigin]=useState("R16"),[dest,setDest]=useState("R21");
  const [depart,setDepart]=useState(()=>localInput(new Date())),[deadline,setDeadline]=useState(()=>localInput(new Date(Date.now()+3*86400000)));
  const [weight,setWeight]=useState("12000"),[value,setValue]=useState("180000");
@@ -59,7 +61,7 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
  const sampleCache=useRef(new Map<string,{at:number;r:Awaited<ReturnType<typeof api.route>>}>());const latestGo=useRef<(automatic?:boolean)=>Promise<void>>(async()=>{});
  const wantedRevision=useRef(revision);wantedRevision.current=Math.max(wantedRevision.current,revision);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;requestId.current++}},[]);
- const body=()=>({origin,destination:dest,depart_at:new Date(depart).toISOString(),required_delivery:deadline?new Date(deadline).toISOString():undefined,weight_kg:Number(weight),value_eur:value.trim()?Number(value):0,optimization,truck:truckProfile,...(sample?{sample_id:sample.id,sample_weather:sampleWeather}:{})});
+ const body=()=>({origin,destination:dest,depart_at:new Date(depart).toISOString(),required_delivery:deadline?new Date(deadline).toISOString():undefined,weight_kg:Number(weight),value_eur:value.trim()?Number(value):0,optimization,truck:truckProfile,planning_rules:planningRules,...(sample?{sample_id:sample.id,sample_weather:sampleWeather}:{})});
  try{latestBody.current=JSON.stringify(body())}catch{latestBody.current="invalid"}
  async function go(automatic=false){
   if(inputInvalid)return;
@@ -138,6 +140,7 @@ export function Planner({nodes,revision,onChange,onReview,onSaved}:{nodes:NetNod
     <div className="truck-fields">{truckRules.map(([key,label,min,max])=><label key={key}>{label}{key==="gross_weight_kg"?" (kg)":" (m)"}<input aria-label={label} aria-invalid={!!inputErrors[key]} required type="number" min={min} max={max} step="any" value={truck[key]} onChange={e=>setTruck({...truck,[key]:e.target.value})}/>{inputErrors[key]&&<small className="field-error">{inputErrors[key]}</small>}</label>)}</div>
    </details>
   </form>
+  <TransportCalendar departure={depart} rules={planningRules} onRulesChange={setPlanningRules} onSelectDate={day=>setDepart(day+depart.slice(10))}/>
  </section>
  {err&&<div role="alert" className="notice notice--warn">{err}</div>}{message&&<div role="status" className="notice notice--info">{message}<button className="linkbtn" onClick={()=>onReview()}>Open control room ↗</button></div>}
  {resp&&!inputInvalid?<section className={`card results-card ${loading?"is-updating":""}`}>{dirty&&<div className="notice notice--warn">Inputs changed. Calculate again to update these results.</div>}<RouteCompare nodes={nodes} options={resp.options} savings={resp.savings} operationalEvents={resp.sample?[]:ops?.events} operationalRevision={resp.sample?undefined:ops?.revision} selected={selected} onSelect={setSelected} onRefresh={()=>{if(!running.current)void go(true)}} deadline={deadline?new Date(deadline).toISOString():null} truck={truckProfile} onScenario={resp.sample?undefined:()=>{void scenarioChanged()}} weatherZones={resp.sample?resp.weather_zones:ops?.weather_zones} onAddWeatherZone={resp.sample?undefined:addZone} onUpdateWeatherZone={resp.sample?undefined:updateZone} onDeleteWeatherZone={resp.sample?undefined:deleteZone} onCancelWeatherZones={resp.sample?undefined:cancelWeatherZones} showJourneyTools={!resp.sample}/>{refreshing&&<div className="route-refresh-status" role="status">Updating estimates…</div>}{!resp.sample&&<div className="results-actions"><span><ShieldCheck size={16}/> Updated estimates · Manager approval before dispatch.</span><button className="btn btn--ghost" onClick={()=>onReview()}>Open control room</button><button className="btn btn--ghost" disabled={saving||loading||refreshing||!!dirty||resp.revision!==revision||resp.recommended===null} onClick={()=>save(true)}>Save recommended</button><button className="btn" disabled={saving||loading||refreshing||!!dirty||resp.revision!==revision} onClick={()=>save(false)}><Save size={15}/>{saving?"Saving…":"Save plan for review"}</button></div>}</section>:null}

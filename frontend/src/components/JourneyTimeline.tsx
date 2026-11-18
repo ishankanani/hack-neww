@@ -1,7 +1,7 @@
 import { Package, Truck, Ban, Factory, PauseCircle, CloudSnow } from "lucide-react";
 import type { JourneyStep } from "../api/types";
 
-const ICON = { handling: Package, drive: Truck, legal_wait: Ban, hub_delay: Factory, weekend_hold: PauseCircle, weather: CloudSnow, manager_wait: PauseCircle, schedule_wait: PauseCircle };
+const ICON = { handling: Package, drive: Truck, legal_wait: Ban, hub_delay: Factory, weekend_hold: PauseCircle, weather: CloudSnow, manager_wait: PauseCircle, schedule_wait: PauseCircle, driver_break: PauseCircle, driver_rest: PauseCircle, weekly_rest: PauseCircle };
 function hm(m: number) { const h = Math.floor(m / 60), mm = m % 60; return h ? `${h}h${mm ? " " + mm + "m" : ""}` : `${mm}m`; }
 function t(iso: string) { return new Date(iso).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin", hour12: false }); }
 

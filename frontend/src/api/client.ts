@@ -6,6 +6,7 @@ async function req<T>(p: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 export const api = {
+  transportCalendar:(year:number,month:number,region:string,companyHold:boolean)=>req<import("./types").TransportCalendarDoc>(`/transport-calendar?year=${year}&month=${month}&region=${encodeURIComponent(region)}&company_sunday_hold=${companyHold}`),
   proposeRoute:(id:string,body:{via_hubs:string[];depart_at?:string})=>req<Shipment>(`/shipments/${id}/route-proposal`,{method:"POST",body:JSON.stringify(body)}),
   journeyExamples:()=>req<{examples:import("./types").JourneyExample[]}>("/journey-examples"),
   driverUpdate:(id:string,body:{kind:"departed"|"delay"|"safe_stop"|"arrived";at?:string;reference?:string;minutes?:number;actual_cost_eur?:number})=>req<Shipment>(`/shipments/${id}/driver-update`,{method:"POST",body:JSON.stringify(body)}),
@@ -49,7 +50,7 @@ export const api = {
   highValue: () => req<{ shipments: HighValue[] }>("/high-value"),
   relations: () => req<{ relations: RelationStat[] }>("/analytics/relations"),
   disruptions: () => req<{ active_operational: unknown[]; historical: Disruption[] }>("/disruptions"),
-  route: (body: { origin: string; destination: string; depart_at?: string; weight_kg?: number; required_delivery?: string; value_eur?: number; optimization?:string; truck?:TruckProfile; sample_id?:string; sample_weather?:boolean;via_hubs?:string[] }) =>
+  route: (body: { origin: string; destination: string; depart_at?: string; weight_kg?: number; required_delivery?: string; value_eur?: number; optimization?:string; truck?:TruckProfile; sample_id?:string; sample_weather?:boolean;via_hubs?:string[];planning_rules?:import("./types").PlanningRules }) =>
     req<RouteResp>("/route", { method: "POST", body: JSON.stringify(body) }),
   shipments: (q = "") => req<{ shipments: Shipment[] }>(`/shipments${q}`),
   shipment: (id: string) => req<Shipment>(`/shipments/${id}`),

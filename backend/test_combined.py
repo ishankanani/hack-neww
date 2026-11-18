@@ -74,13 +74,14 @@ def test_detours_must_stay_inside_germany():
     assert not leaves_germany([[8.40,49.01],[11.08,49.45],[13.74,51.05]])        # Karlsruhe - Nuernberg - Dresden
     assert leaves_germany([[11.08,49.45],[13.38,49.75],[14.42,50.08],[13.74,51.05]])  # via Pilsen and Prague
 
-def test_weekend_timeline_and_weather_scope(tmp_path,monkeypatch):
+@pytest.mark.parametrize("rules", [None, {"region":"DE-BW","company_sunday_hold":True,"trailer_attached":True}])
+def test_weekend_timeline_and_weather_scope(tmp_path,monkeypatch,rules):
     monkeypatch.setenv("STORE_DIR",str(tmp_path)); ops=Operations()
     nodes={i:{"id":i,"name":i,"lat":49.,"lon":x,"type":"branch"} for i,x in [("A",8),("B",8.5),("C",9)]}
     net={"nodes":nodes,"edges":{}}
     sample={"node":"A","start":"2026-09-19T00:00:00Z","end":"2026-09-20T00:00:00Z","temperature_c":4,"condition":"Heavy Snow","rain_mm":0,"snow_cm":5,"visibility_m":500,"wind_kmh":35,"severity":"HIGH"}
     ops.put("weather",sample)
-    j=compute_journey(net,{}, {},{},Providers(),"A","C",dt("2026-09-19T06:00:00+00:00"),["A","B","C"],ops)
+    j=compute_journey(net,{}, {},{},Providers(),"A","C",dt("2026-09-19T06:00:00+00:00"),["A","B","C"],ops,planning_rules=rules)
     assert j["components"]["weather"]==120
     hold=next(s for s in j["steps"] if s["type"]=="weekend_hold")
     end=dt(hold["end"]).astimezone(BERLIN)
@@ -124,7 +125,10 @@ def test_traffic_recompute_and_manager_decision(client):
     assert client.post(f"/api/shipments/{sid}/schedule").status_code==422
     refreshed=client.post(f"/api/shipments/{sid}/replan").json()
     new_direct=next(o for o in refreshed["options"] if len(o["path"])==2)
-    assert new_direct["total_minutes"]-old_direct["total_minutes"]==180
+    assert new_direct["components"]["traffic"]-old_direct["components"]["traffic"]==180
+    # The delay also takes this driver past the daily driving limit.
+    assert new_direct["components"]["driver_rest"]-old_direct["components"]["driver_rest"]==660
+    assert new_direct["total_minutes"]-old_direct["total_minutes"]==180+660
     option=len(refreshed["options"])-1
     decision={"shipment_id":sid,"action":"accept","option":option,"revision":refreshed["options"][option]["revision"],"quote_id":refreshed["options"][option]["quote_id"],"reason":"Reviewed route impact"}
     assert client.post("/api/decisions",json={**decision,"revision":-1}).status_code==409

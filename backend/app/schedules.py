@@ -2,10 +2,12 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from .restrictions import restriction_at
+from .weekend import weekend_window
 from .operations import parse
 
 
-def next_departure(ready, origin, destination, schedules, holidays, events=()):
+def next_departure(ready, origin, destination, schedules, holidays, events=(),
+                   company_sunday_hold=True, truck_ban_applies=True, departure_filter=None):
     matching=[s for s in schedules if s["origin"]==origin and s["destination"]==destination]
     if not matching: return ready, None
     candidates=[]
@@ -21,8 +23,10 @@ def next_departure(ready, origin, destination, schedules, holidays, events=()):
             # Skip nonexistent DST wall times; repeated times use the first occurrence.
             if departure.astimezone(tz).replace(tzinfo=None)!=local.replace(tzinfo=None): continue
             if departure-timedelta(minutes=service["cutoff_minutes"])<ready: continue
-            if restriction_at(departure,holidays)[0]: continue
+            if company_sunday_hold and weekend_window(departure)[0]<=departure: continue
+            if truck_ban_applies and restriction_at(departure,holidays,company_sunday_hold=False)[0]: continue
             if any(e["kind"]=="closure" and e.get("node")==origin and parse(e["start"])<=departure<parse(e["end"]) for e in events): continue
+            if departure_filter and not departure_filter(departure): continue
             candidates.append((departure,service)); break
     if not candidates: raise ValueError("No eligible service departure within 60 days; change the schedule or readiness time")
     return min(candidates,key=lambda item:item[0])
