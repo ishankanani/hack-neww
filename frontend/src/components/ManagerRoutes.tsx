@@ -20,8 +20,6 @@ export function ManagerRoutes({nodes,shipment,ops,onProposed,onCreated,disabled=
  const [result,setResult]=useState<RouteResp|null>(null),[selected,setSelected]=useState(0);
  const [calculated,setCalculated]=useState<Parameters<typeof api.route>[0]|null>(null);
  const [draft,setDraft]=useState(false);
- const [latitude,setLatitude]=useState(""),[longitude,setLongitude]=useState("");
- const [stopped,setStopped]=useState(!!shipment?.hold);
  useEffect(()=>{if(shipment){setVia(shipmentStops(shipment));setDraft(false)}},[shipment?.id,shipment?.manager_route_request?.requested_at,shipment?.approved_at,shipment?.vehicle_position?.id]);
  const moving=movingShipment(shipment);
  const freshPosition=!moving||!!shipment?.vehicle_position&&Date.now()-Date.parse(shipment.vehicle_position.reported_at)<900000;
@@ -33,7 +31,7 @@ export function ManagerRoutes({nodes,shipment,ops,onProposed,onCreated,disabled=
  const requested=draft?undefined:shipment?.manager_route_request?shipment.options?.filter(o=>o.manager_requested):result?.options.filter(o=>o.manager_requested||o.path.join() === [calculated?.origin,...(calculated?.via_hubs??[]),calculated?.destination].join());
  const bestRequested=requested?.find(feasible)??requested?.[0];
  const requestedState=!bestRequested?"":!feasible(bestRequested)?"unavailable":!bestRequested.risk.deadline_ok?"late":"ok";
- async function calculate(updateLocation=false){
+ async function calculate(){
   if(busy)return;
   setBusy(true);onBusyChange?.(true);setError("");
   try{
@@ -44,10 +42,9 @@ export function ManagerRoutes({nodes,shipment,ops,onProposed,onCreated,disabled=
    if(!moving&&(!depart||!Number.isFinite(Date.parse(depart))||Date.parse(depart)<=Date.now()))throw Error("Choose a future departure date and time.");
    if(!shipment&&(!deadline||Date.parse(deadline)<=Date.parse(depart)))throw Error("Delivery deadline must be later than departure.");
    if(shipment){
-    if(updateLocation){
-     const lat=Number(latitude),lon=Number(longitude);
-     if(!latitude.trim()||!longitude.trim()||!Number.isFinite(lat)||!Number.isFinite(lon)||lat< -85||lat>85||lon< -180||lon>180)throw Error("Enter valid coordinates from the latest driver report.");
-     const positioned=await api.reportPosition(shipment.id,{lat,lon,source:"MANAGER REPORTED",movement_state:stopped?"STOPPED":"MOVING"});
+    if(moving&&!freshPosition){
+     // No fresh driver report: estimate the position from the approved plan's driving schedule.
+     const positioned=await api.reportPosition(shipment.id,{source:"PLAN ESTIMATE",movement_state:shipment.hold?"STOPPED":"MOVING"});
      const oldStops=new Set(shipment.route.slice(1,-1)),remaining=new Set(positioned.vehicle_position?.remaining_path??[]);
      nextVia=nextVia.filter(id=>!oldStops.has(id)||remaining.has(id));setVia(nextVia);onProposed(positioned);
     }
@@ -72,10 +69,9 @@ export function ManagerRoutes({nodes,shipment,ops,onProposed,onCreated,disabled=
    <div className="manager-route-chain">{[moving?"Reported position":name(origin),...via.map(name),name(destination)].join(" → ")}</div>
    {!shipment&&<div className="manager-new-details"><label>Shipment weight · kg<input aria-label="Manager shipment weight" type="number" required min="1" max="23800" value={weight} onChange={e=>{setWeight(e.target.value);clearDraft()}}/></label><label>Shipment value · €<input aria-label="Manager shipment value" type="number" min="0" max="100000000" value={value} onChange={e=>{setValue(e.target.value);clearDraft()}}/></label><label>Deliver by<input aria-label="Manager delivery deadline" type="datetime-local" required value={deadline} onChange={e=>{setDeadline(e.target.value);clearDraft()}}/></label></div>}
    {!moving&&Date.parse(depart)<=Date.now()&&<p className="manager-route-warning">Departure has passed. <button className="linkbtn" type="button" onClick={()=>{setDepart(localInput(new Date(Date.now()+10*60000)));clearDraft()}}>Use a departure in 10 minutes</button></p>}
-   {!freshPosition&&<div className="manager-position-update"><b>Current location needed</b><p>Enter the latest driver-reported coordinates to change the remaining journey.</p><div><label>Latitude<input aria-label="Rerouting latitude" type="number" step="any" min="-85" max="85" value={latitude} onChange={e=>setLatitude(e.target.value)}/></label><label>Longitude<input aria-label="Rerouting longitude" type="number" step="any" min="-180" max="180" value={longitude} onChange={e=>setLongitude(e.target.value)}/></label></div><label className="ack"><input type="checkbox" checked={stopped} disabled={!!shipment?.hold} onChange={e=>setStopped(e.target.checked)}/>Vehicle reported stopped</label><button type="button" className="btn btn--ghost" disabled={busy||disabled} onClick={()=>void calculate(true)}>Update location & calculate</button></div>}
    {error&&<p className="manager-route-warning" role="alert">{error}</p>}
    {draft&&shipment&&<p className="manager-draft-note" role="status">Hub connections changed. Calculate the new route before approval.</p>}
-   <button className="btn" disabled={busy||disabled||!freshPosition}>{busy?"Calculating connections…":"Calculate requested route & alternatives"}</button>
+   <button className="btn" disabled={busy||disabled}>{busy?"Calculating connections…":"Calculate requested route & alternatives"}</button>
    </fieldset>
   </form>
   {bestRequested&&<div className={`requested-route-feedback ${requestedState==="ok"?"is-feasible":"is-unavailable"}`} role="status"><div><b>{requestedState==="unavailable"?"Requested connection needs an alternative":requestedState==="late"?"Requested connection is available but misses the delivery deadline":"Requested connection is available"}</b><span>{bestRequested.path.map(name).join(" → ")}</span></div><div className="requested-route-metrics"><span><small>Arrival</small><b>{dt(bestRequested.eta)}</b></span><span><small>Journey time</small><b>{hm(bestRequested.total_minutes)}</b></span><span><small>Distance</small><b>{bestRequested.cost.distance_km} km</b></span><span><small>Fuel</small><b>{bestRequested.cost.fuel_l} L</b></span><span><small>Transport</small><b>{eur(bestRequested.cost.transport_eur)}</b></span></div>{bestRequested.unavailable_reasons?.map(reason=><p key={reason}>{reason}</p>)}{requestedState!=="ok"&&<p>Compare the other options below — each shows its own arrival, journey time and cost.</p>}</div>}

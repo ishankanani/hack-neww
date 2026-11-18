@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import time
+import json
 from copy import copy, deepcopy
 from .runtime import configure_runtime, deployment_info
 configure_runtime()
@@ -126,17 +127,22 @@ def refresh_shared_state():
     with LOCK,persistence.session():
         # Saved journeys, operations and every demo session this worker has open: one query.
         demo_keys={f"demo/{sid}/operations.json":ops for sid,ops in list(_sessions.items())}
-        fresh=persistence.load_many({"operations.json":S["operations"].data,"shipments.json":S["ships"].data,
-                                     **{key:ops.data for key,ops in demo_keys.items()}})
+        fresh=persistence.load_many({"operations.json":S["operations"].data,
+                                     **{key:ops.data for key,ops in demo_keys.items()}},prefix=persistence.SHIP_PREFIX)
         for key,ops_obj in demo_keys.items():
             if key in fresh:ops_obj.data=fresh[key]
-        ops=fresh.get("operations.json");ships=fresh.get("shipments.json")
+        ops=fresh.get("operations.json")
+        # Only journeys changed (or removed) by another server instance are replaced.
+        for name,ship in fresh.items():
+            if not name.startswith(persistence.SHIP_PREFIX):continue
+            sid=name[len(persistence.SHIP_PREFIX):]
+            if ship is None:S["ships"].data.pop(sid,None)
+            else:S["ships"].data[sid]=ship
         if ops is not None:
             S["operations"].data=ops
             S["hub_delays"]=ops.setdefault("hub_delays",{})
             S["ships"].ctx["hub_delays"]=S["hub_delays"]
-        if ships is not None:S["ships"].data=ships
-    return frozenset(["operations.json","shipments.json",*demo_keys])
+    return frozenset(["operations.json",*demo_keys])
 
 
 def serialized(fn):
@@ -163,6 +169,21 @@ def planning_snapshot(context):
             "accepted_plan":{k:plan.get(k) for k in ("quote_id","eta","remaining_only","is_demo")},
         })
     return {**context,"operations":ops,"hub_delays":deepcopy(context["hub_delays"]),"capacity_shipments":summaries}
+
+def _json_default(value):
+    if hasattr(value,"isoformat"):return value.isoformat()
+    if isinstance(value,(set,frozenset,tuple)):return list(value)
+    if hasattr(value,"model_dump"):return value.model_dump(mode="json")
+    return str(value)
+
+
+def fast_json(value):
+    """Send large plan payloads with the C JSON encoder. FastAPI's default
+    jsonable_encoder walks every route coordinate in Python (~0.7 s per journey)."""
+    from fastapi import Response as _Response
+    if isinstance(value,_Response):return value
+    return _Response(json.dumps(value,separators=(",",":"),default=_json_default,allow_nan=False),media_type="application/json")
+
 
 @app.exception_handler(ValueError)
 async def invalid_request(request, exc):
@@ -358,9 +379,9 @@ def route(req: RouteReq):
     safe_available=approvable(options[0])
     if not safe_available:savings=None
     if not sample:_audit("route_calculated", f"{req.origin} → {req.destination}: " + (f"recommended ETA {options[0]['eta']}" if safe_available else "no route clear of simulated weather zones"))
-    return {"options": options, "recommended": 0 if safe_available else None, "savings": savings,
+    return fast_json({"options": options, "recommended": 0 if safe_available else None, "savings": savings,
             "weather": wx, "revision": revision, "providers": S["providers"].all(), "evaluated_at": _now_iso(),
-            "sample": {"id":sample["id"],"title":sample["title"],"weather_applied":req.sample_weather} if sample else None,"weather_zones":zones}
+            "sample": {"id":sample["id"],"title":sample["title"],"weather_applied":req.sample_weather} if sample else None,"weather_zones":zones})
 
 
 @app.get("/api/journey-examples")
@@ -410,7 +431,7 @@ def get_shipment(sid: str):
     s = S["ships"].get(sid)
     if not s:
         raise HTTPException(404, "unknown shipment")
-    return {**s,"dispatch_actions":action_comparison(s)}
+    return fast_json({**s,"dispatch_actions":action_comparison(s)})
 
 
 @app.post("/api/shipments")
@@ -435,8 +456,8 @@ def schedule_shipment(sid: str, option: int = 0, force: bool = False, quote_id: 
         if not 0<=option<len(ship["options"]): raise ValueError("Invalid option")
         revision=ship["options"][option]["revision"]
     result=decision(DecisionReq(shipment_id=sid,action="accept",option=option,revision=revision,quote_id=quote_id,reason=reason,acknowledge_deadline=force))
-    if isinstance(result,Response):return result
-    return {"scheduled":True,"shipment":S["ships"].get(sid)}
+    if isinstance(result,Response) and result.status_code>=400:return result
+    return fast_json({"scheduled":True,"shipment":S["ships"].get(sid)})
 
 
 
@@ -712,7 +733,7 @@ def _save_replan(sid,snapshot,quotes,revision,departure,options):
             or any(ship.get(key)!=snapshot.get(key) for key in _APPROVAL_STATE)):
         raise HTTPException(409,"Journey or conditions changed while recalculating. Try again for the latest plan.")
     s=S["ships"].save_replan(sid,departure,options)
-    return {**s,"dispatch_actions":action_comparison(s)}
+    return fast_json({**s,"dispatch_actions":action_comparison(s)})
 
 
 class ManagerRouteReq(BaseModel):
@@ -726,19 +747,19 @@ def manager_route_proposal(sid:str, req:ManagerRouteReq):
     from .manager_routes import propose
     s=propose(S["ships"],sid,req.via_hubs,req.depart_at.isoformat() if req.depart_at else None)
     _audit("manager_route_proposed",f"{sid}: "+" → ".join(s["manager_route_request"]["path"]),"MANAGER INPUT")
-    return {**s,"dispatch_actions":action_comparison(s)}
+    return fast_json({**s,"dispatch_actions":action_comparison(s)})
 
 
 class PositionReq(BaseModel):
     lat: Optional[float] = Field(default=None,ge=-85,le=85,allow_inf_nan=False)
     lon: Optional[float] = Field(default=None,ge=-180,le=180,allow_inf_nan=False)
-    source: Literal["DRIVER REPORTED","MANAGER REPORTED","SIMULATION"] = "MANAGER REPORTED"
+    source: Literal["DRIVER REPORTED","MANAGER REPORTED","SIMULATION","PLAN ESTIMATE"] = "MANAGER REPORTED"
     reported_at: Optional[AwareDatetime] = None
     progress_percent: Optional[float] = Field(default=None,ge=0,le=100,allow_inf_nan=False)
     movement_state: Literal["MOVING","STOPPED"] = "MOVING"
     @model_validator(mode="after")
     def coordinates(self):
-        if self.progress_percent is None and (self.lat is None or self.lon is None):raise ValueError("Provide coordinates or a simulation percentage")
+        if self.source!="PLAN ESTIMATE" and self.progress_percent is None and (self.lat is None or self.lon is None):raise ValueError("Provide coordinates or a simulation percentage")
         if self.source=="SIMULATION" and self.progress_percent is None:raise ValueError("Simulation requires an explicit progress percentage")
         return self
 
@@ -841,7 +862,7 @@ def decision(req: DecisionReq):
         ctx=planning_snapshot(ctx)
     # Provider calls run outside both the process lock and the DB write transaction.
     fresh=review_options(ctx,snapshot,only_paths=paths) if paths is not None else review_options(ctx,snapshot)
-    return _save_decision(req,snapshot,fresh,paths is not None)
+    return fast_json(_save_decision(req,snapshot,fresh,paths is not None))
 
 
 @serialized
@@ -867,7 +888,7 @@ def _save_decision(req, snapshot=None, fresh=None, limited=False):
     if previous_decision:
         S["operations"].put("decisions",{**previous_decision,"created_at":previous_decision.get("created_at",previous_decision["updated_at"]),"superseded_by":row["id"],"superseded_at":row["updated_at"]},previous_decision["id"])
     _audit("manager_decision",f"{req.shipment_id}: {req.action} — {req.reason}","MANAGER INPUT")
-    return _decision_response(row,s)
+    return fast_json(_decision_response(row,s))
 
 
 class DecisionNoteReq(BaseModel):

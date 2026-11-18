@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import zlib
+import hashlib
 import contextvars
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -13,6 +14,11 @@ from pathlib import Path
 _connection = ContextVar("planner_database_connection", default=None)
 _writing = ContextVar("planner_database_write", default=False)
 _versions = {}
+# Saved journeys are stored one row per journey ("ship/<id>"), so a manager action
+# writes only the journey it changed instead of every journey's route geometry.
+SHIP_PREFIX = "ship/"
+SHIPS_MIGRATED = "ships.migrated"
+_ship_digests = {}  # row name -> digest of the JSON last read or written for it
 # Reuse database connections inside a warm server instance. Opening a new TLS
 # connection to a remote Postgres costs hundreds of milliseconds, and one page
 # view triggers several requests; this was the main cause of slow hosted pages.
@@ -127,7 +133,7 @@ def session(write=False):
         except BaseException:
             # A rolled-back request may already have changed the worker's
             # in-memory objects; force their next read back from Postgres.
-            _versions.clear()
+            _forget()
             try:
                 if not connection.closed:
                     connection.rollback()
@@ -143,8 +149,13 @@ def session(write=False):
         # The failure may come from the commit itself, after save() already
         # recorded a version that never landed. Forget every cached version so
         # the next read reloads committed state instead of trusting memory.
-        _versions.clear()
+        _forget()
         raise StorageUnavailable("Shared storage could not complete this request. No successful save was confirmed; please try again.") from None
+
+
+def _forget():
+    _versions.clear()
+    _ship_digests.clear()
 
 
 def encode(value):
@@ -172,7 +183,7 @@ def load(key, fallback, force=False):
 refreshed = contextvars.ContextVar("refreshed", default=frozenset())
 
 
-def load_many(fallbacks):
+def load_many(fallbacks, prefix=None):
     """Like load() for several keys, in one round trip when nothing changed.
 
     Returns {key: payload} only for keys whose stored version differs from the one
@@ -181,18 +192,67 @@ def load_many(fallbacks):
     keys = list(fallbacks)
     with session():
         connection = _connection.get()
-        versions = dict(connection.execute("SELECT name,version FROM dachser_state WHERE name = ANY(%s)", (keys,)).fetchall())
+        if prefix:
+            # Fixed keys and every row of the collection in the same round trip.
+            versions = dict(connection.execute("SELECT name,version FROM dachser_state WHERE name = ANY(%s) OR name LIKE %s", (keys, prefix + "%")).fetchall())
+        else:
+            versions = dict(connection.execute("SELECT name,version FROM dachser_state WHERE name = ANY(%s)", (keys,)).fetchall())
+        present = {name for name in versions if prefix and name.startswith(prefix)}
         for key in keys:
             if key not in versions:
                 connection.execute("INSERT INTO dachser_state(name,payload) VALUES(%s,%s) ON CONFLICT DO NOTHING", (key, encode(fallbacks[key])))
                 versions[key] = None
-        changed = [k for k in keys if versions[k] is None or _versions.get(k) != versions[k]]
-        if not changed: return {}
+        changed = [k for k in [*keys, *present] if versions[k] is None or _versions.get(k) != versions[k]]
         out = {}
-        for name, payload, version in connection.execute("SELECT name,payload,version FROM dachser_state WHERE name = ANY(%s)", (changed,)).fetchall():
-            _versions[name] = version
-            out[name] = json.loads(zlib.decompress(bytes(payload)))
+        if changed:
+            for name, payload, version in connection.execute("SELECT name,payload,version FROM dachser_state WHERE name = ANY(%s)", (changed,)).fetchall():
+                _versions[name] = version
+                raw = zlib.decompress(bytes(payload))
+                if prefix and name.startswith(prefix):
+                    _ship_digests[name] = hashlib.blake2b(raw, digest_size=16).digest()
+                out[name] = json.loads(raw)
+        if prefix:
+            # Rows deleted by another server instance.
+            for name in [n for n in _versions if n.startswith(prefix) and n not in present]:
+                _versions.pop(name, None); _ship_digests.pop(name, None)
+                out[name] = None
         return out
+
+
+def load_ships(fallback):
+    """All saved journeys, one row each. Splits the legacy single record once."""
+    with session(write=True):
+        connection = _connection.get()
+        if connection.execute("SELECT 1 FROM dachser_state WHERE name=%s", (SHIPS_MIGRATED,)).fetchone() is None:
+            row = connection.execute("SELECT payload FROM dachser_state WHERE name='shipments.json'").fetchone()
+            legacy = json.loads(zlib.decompress(bytes(row[0]))) if row else fallback
+            for sid, ship in (legacy or {}).items():
+                connection.execute("INSERT INTO dachser_state(name,payload) VALUES(%s,%s) ON CONFLICT DO NOTHING",
+                                   (SHIP_PREFIX + sid, zlib.compress(json.dumps(ship, separators=(",", ":"), default=str).encode(), 1)))
+            connection.execute("INSERT INTO dachser_state(name,payload) VALUES(%s,%s) ON CONFLICT DO NOTHING", (SHIPS_MIGRATED, encode({"at": time.time()})))
+        rows = load_many({}, prefix=SHIP_PREFIX)
+        return {name[len(SHIP_PREFIX):]: ship for name, ship in rows.items() if ship is not None}
+
+
+def save_ships(data):
+    """Write only journeys whose content changed; delete removed ones."""
+    if not configured(): return False
+    with session(write=True):
+        connection = _connection.get()
+        present = set()
+        for sid, ship in data.items():
+            name = SHIP_PREFIX + sid; present.add(name)
+            raw = json.dumps(ship, separators=(",", ":"), default=str).encode()
+            digest = hashlib.blake2b(raw, digest_size=16).digest()
+            if _ship_digests.get(name) == digest:
+                continue
+            row = connection.execute("INSERT INTO dachser_state(name,payload) VALUES(%s,%s) ON CONFLICT(name) DO UPDATE SET payload=EXCLUDED.payload, version=dachser_state.version+1, updated_at=now() RETURNING version",
+                                     (name, zlib.compress(raw, 1))).fetchone()
+            _versions[name] = row[0]; _ship_digests[name] = digest
+        for name in [n for n in _versions if n.startswith(SHIP_PREFIX) and n not in present]:
+            connection.execute("DELETE FROM dachser_state WHERE name=%s", (name,))
+            _versions.pop(name, None); _ship_digests.pop(name, None)
+    return True
 
 
 def save(key, value):
