@@ -146,7 +146,9 @@ class TomTom:
     def route_via(self,a,b,via,depart,truck,avoid_areas=None,max_alternatives=0):
         if not self.key:return None
         if depart<now()-timedelta(minutes=5):return None
-        params={"traffic":"true","travelMode":"truck","routeType":"fastest","computeTravelTimeFor":"all","sectionType":"traffic","departAt":depart.replace(second=0,microsecond=0).isoformat(),"vehicleHeight":truck["height_m"],"vehicleWidth":truck["width_m"],"vehicleLength":truck["length_m"],"vehicleWeight":truck["gross_weight_kg"],"vehicleMaxSpeed":80}
+        # TomTom requires whole kilograms. Round up so routing never assumes a lighter truck.
+        vehicle_weight=math.ceil(truck["gross_weight_kg"])
+        params={"traffic":"true","travelMode":"truck","routeType":"fastest","computeTravelTimeFor":"all","sectionType":"traffic","departAt":depart.replace(second=0,microsecond=0).isoformat(),"vehicleHeight":truck["height_m"],"vehicleWidth":truck["width_m"],"vehicleLength":truck["length_m"],"vehicleWeight":vehicle_weight,"vehicleMaxSpeed":80}
         if max_alternatives:params.update(maxAlternatives=max_alternatives,alternativeType="anyRoute")
         stops=":".join(f"{lat},{lon}" for lat,lon in [a,*via,b])
         url=f"https://api.tomtom.com/routing/1/calculateRoute/{stops}/json"
